@@ -1,0 +1,22 @@
+# Build output
+/ui/dist/
+/bin/
+/out/
+
+# Node
+node_modules/
+
+# Local environment — never commit the Headscale admin key
+.env
+.env.local
+/dev/.env.dev
+
+# Headboard's own store, including the WAL sidecars
+*.db
+*.db-wal
+*.db-shm
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,43 @@
+services:
+  headboard:
+    build:
+      context: .
+      args:
+        VERSION: ${HEADBOARD_VERSION:-0.1.0-dev}
+    ports:
+      - '3000:3000'
+    environment:
+      # Where your existing Headscale lives, and an admin key from
+      # `headscale apikeys create`. The key stays in this process; the browser
+      # never sees it.
+      HEADSCALE_URL: ${HEADSCALE_URL:?set HEADSCALE_URL in .env}
+      HEADSCALE_API_KEY: ${HEADSCALE_API_KEY:?set HEADSCALE_API_KEY in .env}
+      HEADBOARD_POLL_INTERVAL: ${HEADBOARD_POLL_INTERVAL:-5s}
+      HEADBOARD_SESSION_LIFETIME: ${HEADBOARD_SESSION_LIFETIME:-12h}
+
+      # Everything below is optional.
+      #
+      # Without an identity provider, Headboard creates an owner on first run
+      # and prints its password to the log once — `docker compose logs
+      # headboard`. Set these to add OIDC alongside that: use the SAME issuer
+      # as Headscale, because accounts are matched to Headscale users on
+      # issuer + subject.
+      #
+      # PUBLIC_URL is where browsers reach Headboard; the OIDC redirect is
+      # derived from it and must match what the provider has registered:
+      # <HEADBOARD_PUBLIC_URL>/auth/callback
+      HEADBOARD_PUBLIC_URL: ${HEADBOARD_PUBLIC_URL:-http://127.0.0.1:3000}
+      HEADBOARD_ADMIN_EMAIL: ${HEADBOARD_ADMIN_EMAIL:-admin@headboard.local}
+      HEADBOARD_ADMIN_RESET: ${HEADBOARD_ADMIN_RESET:-false}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+    volumes:
+      # Accounts, sessions, audit log and policy history. Losing this means a
+      # new owner password and an empty audit trail; the tailnet itself is
+      # untouched, because Headscale stays the source of truth for that.
+      - headboard-data:/data
+    restart: unless-stopped
+
+volumes:
+  headboard-data:

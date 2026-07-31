@@ -1,0 +1,74 @@
+# Throwaway Headscale for the development loop. Never point this at, or run it
+# alongside, a real tailnet.
+#
+#   ./dev/up.sh     start + seed + write .env.dev
+#   ./dev/down.sh   stop + destroy the volume
+#
+# Headboard itself runs on the host during development (`go run ./cmd/headboard`)
+# so the edit/build cycle stays fast. Only Headscale lives in a container —
+# Headboard's own store is a SQLite file, so there is no database to run.
+
+services:
+  headscale-dev:
+    image: ghcr.io/juanfont/headscale:v0.29.3
+    command: serve
+    ports:
+      - '127.0.0.1:8080:8080'
+    volumes:
+      - ./dev/headscale/config.yaml:/etc/headscale/config.yaml:ro
+      - ./dev/headscale/derp.yaml:/etc/headscale/derp.yaml:ro
+      - headscale-dev-data:/var/lib/headscale
+    healthcheck:
+      test: ['CMD', 'headscale', 'health']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  # Everything below is the all-in-Docker loop, behind the `app` profile so
+  # `./dev/up.sh` still starts only Headscale. Use ./dev/app.sh,
+  # which works out HOST_IP for you.
+  #
+  # HOST_IP has to be a real address of this machine rather than localhost:
+  # the OIDC issuer is one string that the browser and the Headboard container
+  # both have to resolve, and inside a container 127.0.0.1 is the container.
+  # It defaults rather than being required because compose interpolates every
+  # service in this file even when a profile excludes it — a `${VAR:?...}` here
+  # would break plain `./dev/up.sh`. app.sh always exports a real value.
+  mockoidc:
+    profiles: ['app']
+    build: ./dev/mockoidc
+    ports:
+      - '9998:9998'
+    environment:
+      MOCKOIDC_ADDR: 0.0.0.0:9998
+      MOCKOIDC_ADVERTISE: ${HOST_IP:-127.0.0.1}:9998
+    restart: unless-stopped
+
+  headboard:
+    profiles: ['app']
+    build:
+      context: .
+    ports:
+      - '3000:3000'
+    environment:
+      HEADSCALE_URL: http://headscale-dev:8080
+      HEADSCALE_API_KEY: ${HEADSCALE_API_KEY:-}
+      DATABASE_URL: /data/headboard.db
+      HEADBOARD_PUBLIC_URL: http://${HOST_IP:-127.0.0.1}:3000
+      OIDC_ISSUER: http://${HOST_IP:-127.0.0.1}:9998/oidc
+      OIDC_CLIENT_ID: headboard-dev
+      OIDC_CLIENT_SECRET: headboard-dev-secret
+      HEADBOARD_POLL_INTERVAL: 5s
+    volumes:
+      - headboard-dev-data:/data
+    depends_on:
+      headscale-dev:
+        condition: service_healthy
+      mockoidc:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  headscale-dev-data:
+  headboard-dev-data:
