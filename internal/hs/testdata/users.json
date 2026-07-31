@@ -1,0 +1,34 @@
+{
+    "users": [
+        {
+            "id": "1",
+            "name": "alice",
+            "createdAt": "2026-07-31T05:36:08.075775216Z",
+            "displayName": "Alice",
+            "email": "alice@headboard.test",
+            "providerId": "",
+            "provider": "",
+            "profilePicUrl": ""
+        },
+        {
+            "id": "2",
+            "name": "bob",
+            "createdAt": "2026-07-31T05:36:08.259571966Z",
+            "displayName": "Bob",
+            "email": "bob@headboard.test",
+            "providerId": "",
+            "provider": "",
+            "profilePicUrl": ""
+        },
+        {
+            "id": "3",
+            "name": "ops",
+            "createdAt": "2026-07-31T05:36:08.438697008Z",
+            "displayName": "Ops",
+            "email": "ops@headboard.test",
+            "providerId": "",
+            "provider": "",
+            "profilePicUrl": ""
+        }
+    ]
+}

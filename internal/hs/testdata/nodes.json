@@ -1,0 +1,170 @@
+{
+    "nodes": [
+        {
+            "id": "1",
+            "machineKey": "mkey:3f29bd7790ea313916da698327618169a8d30e7f41a646aff0ebff6f5205c964",
+            "nodeKey": "nodekey:8b161edebd0d9f99c3dc4a164fdaf0addacb699aa9eb4240604013fb1325eb4d",
+            "discoKey": "discokey:0000000000000000000000000000000000000000000000000000000000000000",
+            "ipAddresses": [
+                "100.64.0.1",
+                "fd7a:115c:a1e0::1"
+            ],
+            "name": "alice-laptop",
+            "user": {
+                "id": "1",
+                "name": "alice",
+                "createdAt": "2026-07-31T05:36:08.075775216Z",
+                "displayName": "Alice",
+                "email": "alice@headboard.test",
+                "providerId": "",
+                "provider": "",
+                "profilePicUrl": ""
+            },
+            "lastSeen": "2026-07-31T05:36:25.807879626Z",
+            "expiry": "0001-01-01T00:00:00Z",
+            "preAuthKey": null,
+            "createdAt": "2026-07-31T05:36:25.808190376Z",
+            "registerMethod": "REGISTER_METHOD_CLI",
+            "givenName": "alice-laptop",
+            "online": false,
+            "approvedRoutes": [],
+            "availableRoutes": [],
+            "subnetRoutes": [],
+            "tags": []
+        },
+        {
+            "id": "2",
+            "machineKey": "mkey:8c7c0edc8fdf87ef61db08b526542d8955e8e5b0e5a61c05e924383cc9969311",
+            "nodeKey": "nodekey:93f50821addee9dbd9c8068d7ce54c14b6c63bd448775bc6b830930c5f52d908",
+            "discoKey": "discokey:0000000000000000000000000000000000000000000000000000000000000000",
+            "ipAddresses": [
+                "100.64.0.2",
+                "fd7a:115c:a1e0::2"
+            ],
+            "name": "alice-phone",
+            "user": {
+                "id": "1",
+                "name": "alice",
+                "createdAt": "2026-07-31T05:36:08.075775216Z",
+                "displayName": "Alice",
+                "email": "alice@headboard.test",
+                "providerId": "",
+                "provider": "",
+                "profilePicUrl": ""
+            },
+            "lastSeen": "2026-07-31T05:36:26.817278794Z",
+            "expiry": "0001-01-01T00:00:00Z",
+            "preAuthKey": null,
+            "createdAt": "2026-07-31T05:36:26.817403794Z",
+            "registerMethod": "REGISTER_METHOD_CLI",
+            "givenName": "alice-phone",
+            "online": false,
+            "approvedRoutes": [],
+            "availableRoutes": [],
+            "subnetRoutes": [],
+            "tags": []
+        },
+        {
+            "id": "3",
+            "machineKey": "mkey:6c4f97ed0d0a37694be9c9c1717250d538874742b59ab21157bfba2ebf8ed830",
+            "nodeKey": "nodekey:1975ba7b6f33accd8adcddd3cc7938d00bc7dd9943841915d8de88c1fa2d2800",
+            "discoKey": "discokey:0000000000000000000000000000000000000000000000000000000000000000",
+            "ipAddresses": [
+                "100.64.0.3",
+                "fd7a:115c:a1e0::3"
+            ],
+            "name": "bob-desktop",
+            "user": {
+                "id": "2",
+                "name": "bob",
+                "createdAt": "2026-07-31T05:36:08.259571966Z",
+                "displayName": "Bob",
+                "email": "bob@headboard.test",
+                "providerId": "",
+                "provider": "",
+                "profilePicUrl": ""
+            },
+            "lastSeen": "2026-07-31T05:36:27.782774586Z",
+            "expiry": "0001-01-01T00:00:00Z",
+            "preAuthKey": null,
+            "createdAt": "2026-07-31T05:36:27.782895752Z",
+            "registerMethod": "REGISTER_METHOD_CLI",
+            "givenName": "bob-desktop",
+            "online": false,
+            "approvedRoutes": [],
+            "availableRoutes": [],
+            "subnetRoutes": [],
+            "tags": []
+        },
+        {
+            "id": "4",
+            "machineKey": "mkey:1e59d17f719ba85a37d28711651ecd4076c8a51abb25888c627e1c3e566f587a",
+            "nodeKey": "nodekey:018b3a88e1e757d1fe6ab71906b2c4682af469f889a5c453ddd7fba4f89b1c0d",
+            "discoKey": "discokey:0000000000000000000000000000000000000000000000000000000000000000",
+            "ipAddresses": [
+                "100.64.0.4",
+                "fd7a:115c:a1e0::4"
+            ],
+            "name": "ops-gw",
+            "user": {
+                "id": "3",
+                "name": "ops",
+                "createdAt": "2026-07-31T05:36:08.438697008Z",
+                "displayName": "Ops",
+                "email": "ops@headboard.test",
+                "providerId": "",
+                "provider": "",
+                "profilePicUrl": ""
+            },
+            "lastSeen": "2026-07-31T05:36:28.838869461Z",
+            "expiry": "0001-01-01T00:00:00Z",
+            "preAuthKey": null,
+            "createdAt": "2026-07-31T05:36:28.838982253Z",
+            "registerMethod": "REGISTER_METHOD_CLI",
+            "givenName": "ops-gw",
+            "online": false,
+            "approvedRoutes": [
+                "0.0.0.0/0",
+                "10.0.0.0/24",
+                "::/0"
+            ],
+            "availableRoutes": [],
+            "subnetRoutes": [],
+            "tags": []
+        },
+        {
+            "id": "5",
+            "machineKey": "mkey:cf7c32fcf448e16c6e130d49d61ed7146d71a3069f3d29593dfedd8a6ce2140f",
+            "nodeKey": "nodekey:8c43e1f4a2c2d3000c0675e3eb9b7f9facab0e7f4ac11037964e4effadbd5c0c",
+            "discoKey": "discokey:0000000000000000000000000000000000000000000000000000000000000000",
+            "ipAddresses": [
+                "100.64.0.5",
+                "fd7a:115c:a1e0::5"
+            ],
+            "name": "prod-web",
+            "user": {
+                "id": "2147455555",
+                "name": "tagged-devices",
+                "createdAt": "0001-01-01T00:00:00Z",
+                "displayName": "Tagged Devices",
+                "email": "",
+                "providerId": "",
+                "provider": "",
+                "profilePicUrl": ""
+            },
+            "lastSeen": "2026-07-31T05:36:29.823521712Z",
+            "expiry": "0001-01-01T00:00:00Z",
+            "preAuthKey": null,
+            "createdAt": "2026-07-31T05:36:29.823645003Z",
+            "registerMethod": "REGISTER_METHOD_CLI",
+            "givenName": "prod-web",
+            "online": false,
+            "approvedRoutes": [],
+            "availableRoutes": [],
+            "subnetRoutes": [],
+            "tags": [
+                "tag:prod"
+            ]
+        }
+    ]
+}

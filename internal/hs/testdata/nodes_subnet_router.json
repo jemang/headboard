@@ -1,0 +1,46 @@
+{
+    "nodes": [
+        {
+            "id": "4",
+            "machineKey": "mkey:1e59d17f719ba85a37d28711651ecd4076c8a51abb25888c627e1c3e566f587a",
+            "nodeKey": "nodekey:018b3a88e1e757d1fe6ab71906b2c4682af469f889a5c453ddd7fba4f89b1c0d",
+            "discoKey": "discokey:0000000000000000000000000000000000000000000000000000000000000000",
+            "ipAddresses": [
+                "100.64.0.4",
+                "fd7a:115c:a1e0::4"
+            ],
+            "name": "ops-gw",
+            "user": {
+                "id": "3",
+                "name": "ops",
+                "createdAt": "2026-07-31T05:36:08.438697008Z",
+                "displayName": "Ops",
+                "email": "ops@headboard.test",
+                "providerId": "",
+                "provider": "",
+                "profilePicUrl": ""
+            },
+            "lastSeen": "2026-07-31T05:36:28.838869461Z",
+            "expiry": "2027-01-31T00:00:00Z",
+            "preAuthKey": null,
+            "createdAt": "2026-07-31T05:36:28.838982253Z",
+            "registerMethod": "REGISTER_METHOD_CLI",
+            "givenName": "ops-gw",
+            "online": true,
+            "approvedRoutes": [
+                "0.0.0.0/0",
+                "10.0.0.0/24",
+                "::/0"
+            ],
+            "availableRoutes": [
+                "10.0.0.0/24",
+                "0.0.0.0/0",
+                "::/0"
+            ],
+            "subnetRoutes": [
+                "10.0.0.0/24"
+            ],
+            "tags": []
+        }
+    ]
+}
