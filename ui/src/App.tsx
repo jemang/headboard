@@ -5,6 +5,8 @@ import { Link, Router, useRouter } from './lib/router'
 import { useTheme, type Theme } from './lib/theme'
 import { Palette } from './components/Palette'
 import { Button, ErrorNote } from './components/ui'
+import { ToastHost } from './components/Toast'
+import { KeyRound, Laptop, LogOut, Menu, Moon, ShieldCheck, Sun, Users, X } from 'lucide-react'
 import { Devices } from './routes/Devices'
 import { Acl } from './routes/Acl'
 import { Keys, People } from './routes/Admin'
@@ -13,7 +15,9 @@ import { Account } from './routes/Account'
 export function App() {
   return (
     <Router>
-      <Shell />
+      <ToastHost>
+        <Shell />
+      </ToastHost>
     </Router>
   )
 }
@@ -55,16 +59,28 @@ function Shell() {
           navigate('/devices')
         }}
       />
-      <main className="mx-auto w-full max-w-6xl px-5 py-6">
-        <VersionBanner />
-        {path === '/acl' && <Acl />}
-        {path === '/people' && <People me={user} />}
-        {path === '/keys' && <Keys me={user} />}
-        {path === '/account' && <Account me={user} />}
-        {(path === '/' || path === '/devices') && (
-          <Devices me={user} focus={focusDevice} onFocused={() => setFocusDevice(null)} />
-        )}
-        {!known.includes(path) && <p className="text-sm text-muted-foreground">Nothing here.</p>}
+      <main className="min-h-dvh lg:pl-64">
+        <div className="border-b border-border bg-surface-0/75 px-4 py-3 backdrop-blur sm:px-6 lg:px-8">
+          <div className="mx-auto flex max-w-7xl items-center gap-3">
+            <span className="text-eyebrow font-semibold uppercase text-muted-foreground">Tailnet control plane</span>
+            <span className="hidden h-4 w-px bg-border sm:block" />
+            <span className="hidden text-xs text-muted-foreground sm:block">Live state from Headscale</span>
+            <kbd className="ml-auto hidden items-center gap-1 rounded-md border border-border bg-surface-1 px-2 py-1 font-mono text-[0.6875rem] text-muted-foreground md:inline-flex">
+              <span>⌘</span>K to search
+            </kbd>
+          </div>
+        </div>
+        <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+          <VersionBanner />
+          {path === '/acl' && <Acl />}
+          {path === '/people' && <People me={user} />}
+          {path === '/keys' && <Keys me={user} />}
+          {path === '/account' && <Account me={user} />}
+          {(path === '/' || path === '/devices') && (
+            <Devices me={user} focus={focusDevice} onFocused={() => setFocusDevice(null)} />
+          )}
+          {!known.includes(path) && <p className="text-sm text-muted-foreground">Nothing here.</p>}
+        </div>
       </main>
     </div>
   )
@@ -108,61 +124,107 @@ function Nav({
   setTheme: (t: Theme) => void
 }) {
   const can = (c: string) => me.capabilities.includes(c)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const links = [
-    { to: '/devices', label: can('view:all') ? 'Devices' : 'My devices', show: true },
-    { to: '/acl', label: 'Access control', show: can('manage:policy') },
-    { to: '/people', label: 'People', show: can('manage:users') },
-    { to: '/keys', label: 'Keys', show: true },
+    { to: '/devices', label: can('view:all') ? 'Devices' : 'My devices', icon: Laptop, show: true },
+    { to: '/acl', label: 'Access control', icon: ShieldCheck, show: can('manage:policy') },
+    { to: '/people', label: 'People', icon: Users, show: can('manage:users') },
+    { to: '/keys', label: 'Keys', icon: KeyRound, show: true },
   ].filter((l) => l.show)
 
   const active = path === '/' ? '/devices' : path
 
+  const rail = (compact = false) => (
+    <nav className={compact ? 'space-y-1' : 'space-y-1'} aria-label="Primary navigation">
+      <p className={compact ? 'sr-only' : 'px-3 pb-2 pt-2 text-eyebrow font-semibold uppercase text-muted-foreground'}>
+        Tailnet
+      </p>
+      {links.map((l) => (
+        <Link
+          key={l.to}
+          to={l.to}
+          onClick={() => setMenuOpen(false)}
+          className={
+            active === l.to
+              ? 'flex items-center gap-3 rounded-lg bg-accent-500/15 px-3 py-2.5 text-sm font-semibold text-accent-700 dark:text-accent-400'
+              : 'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground'
+          }
+        >
+          <l.icon aria-hidden className="size-4.5 shrink-0" strokeWidth={1.7} />
+          <span className={compact ? 'sr-only' : ''}>{l.label}</span>
+        </Link>
+      ))}
+    </nav>
+  )
+
   return (
-    <header className="border-b border-border bg-surface-1">
-      <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3">
-        <Link to="/devices" className="text-base font-semibold tracking-tight">
+    <>
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-border bg-surface-1/95 px-3 py-5 backdrop-blur lg:flex">
+        <Link to="/devices" className="mb-8 flex items-center gap-3 px-3">
+          <span className="grid size-8 place-items-center rounded-lg bg-accent-500 text-sm font-bold text-slate-950 shadow-sm">H</span>
+          <span>
+            <span className="block text-base font-semibold tracking-tight">Headboard</span>
+            <span className="block text-[0.6875rem] text-muted-foreground">Headscale control plane</span>
+          </span>
+        </Link>
+        {rail()}
+        <div className="mt-auto space-y-3 border-t border-border px-3 pt-4">
+          <Link to="/account" className="block rounded-lg p-1 transition-colors hover:bg-surface-2">
+            <span className="block truncate text-sm font-medium">{me.user.email}</span>
+            <span className="font-mono text-xs text-muted-foreground">{me.user.role}</span>
+          </Link>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-label={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+            >
+              {theme === 'dark' ? <Sun aria-hidden className="size-4" strokeWidth={1.5} /> : <Moon aria-hidden className="size-4" strokeWidth={1.5} />}
+            </button>
+            <form method="post" action="/auth/logout">
+              <Button type="submit" variant="ghost" icon={LogOut} title="Sign out" className="px-2">
+                <span className="sr-only">Sign out</span>
+              </Button>
+            </form>
+          </div>
+        </div>
+      </aside>
+
+      <header className="sticky top-0 z-30 flex items-center border-b border-border bg-surface-1/95 px-4 py-3 backdrop-blur lg:hidden">
+        <Link to="/devices" className="flex items-center gap-2 font-semibold tracking-tight">
+          <span className="grid size-7 place-items-center rounded-md bg-accent-500 text-xs font-bold text-slate-950">H</span>
           Headboard
         </Link>
-
-        <nav className="flex flex-1 gap-1">
-          {links.map((l) => (
-            <Link
-              key={l.to}
-              to={l.to}
-              className={
-                active === l.to
-                  ? 'rounded-md bg-surface-2 px-2.5 py-1.5 text-sm font-medium'
-                  : 'rounded-md px-2.5 py-1.5 text-sm text-muted-foreground hover:bg-surface-2'
-              }
-            >
-              {l.label}
+        <button
+          type="button"
+          aria-expanded={menuOpen}
+          aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
+          onClick={() => setMenuOpen((open) => !open)}
+          className="ml-auto rounded-lg p-2 text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+        >
+          {menuOpen ? <X aria-hidden className="size-5" /> : <Menu aria-hidden className="size-5" />}
+        </button>
+      </header>
+      {menuOpen && (
+        <div className="fixed inset-x-0 bottom-0 top-[53px] z-20 border-b border-border bg-surface-0/98 p-4 shadow-raised backdrop-blur lg:hidden animate-fade-in">
+          {rail()}
+          <div className="mt-5 border-t border-border pt-4">
+            <Link to="/account" onClick={() => setMenuOpen(false)} className="block rounded-lg p-3 hover:bg-surface-2">
+              <span className="block text-sm font-medium">{me.user.email}</span>
+              <span className="font-mono text-xs text-muted-foreground">{me.user.role}</span>
             </Link>
-          ))}
-        </nav>
-
-        <div className="flex items-center gap-3 text-sm">
-          <button
-            type="button"
-            aria-label={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}
-            title="⌘K for everything else"
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="rounded-md px-2 py-1 text-muted-foreground hover:bg-surface-2"
-          >
-            {theme === 'dark' ? '☀' : '☾'}
-          </button>
-          <Link to="/account" className="text-muted-foreground hover:text-foreground">
-            {me.user.email}
-          </Link>
-          <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs">{me.user.role}</span>
-          <form method="post" action="/auth/logout">
-            <Button type="submit" variant="ghost">
-              Sign out
-            </Button>
-          </form>
+            <div className="mt-2 flex gap-2">
+              <Button variant="default" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} icon={theme === 'dark' ? Sun : Moon}>
+                {theme === 'dark' ? 'Light theme' : 'Dark theme'}
+              </Button>
+              <form method="post" action="/auth/logout"><Button type="submit" variant="ghost" icon={LogOut}>Sign out</Button></form>
+            </div>
+          </div>
         </div>
-      </div>
-    </header>
+      )}
+    </>
   )
 }
 
@@ -177,7 +239,7 @@ function VersionBanner() {
   if (!health.data || health.data.headscaleVersionMatch) return null
 
   return (
-    <div className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm">
+    <div className="mb-6 rounded-xl border border-warn/40 bg-warn/10 px-4 py-3 text-sm shadow-sm">
       This Headscale runs <code>{health.data.headscaleServerVersion}</code>, but Headboard was built
       against <code>{health.data.headscaleVersion}</code>. Effective rules may not match what the
       server actually enforces.
@@ -203,48 +265,68 @@ function Login({ error }: { error: unknown }) {
 
   return (
     <Centered>
-      <div className="w-full max-w-sm space-y-4 rounded-lg border border-border bg-surface-1 p-6">
-        <div>
-          <h1 className="text-lg font-semibold">Headboard</h1>
-          <p className="mt-1 text-sm text-muted-foreground">A control plane for Headscale.</p>
+      <div className="grid w-full max-w-4xl overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-raised md:grid-cols-[1.05fr_.95fr]">
+        <div className="hidden flex-col justify-between bg-slate-950 p-8 text-slate-100 md:flex">
+          <div>
+            <span className="grid size-10 place-items-center rounded-xl bg-accent-500 text-base font-bold text-slate-950">H</span>
+            <p className="mt-12 text-eyebrow font-semibold uppercase tracking-[0.14em] text-accent-400">Headscale control plane</p>
+            <h1 className="mt-3 max-w-sm text-3xl font-semibold tracking-tight">Your tailnet, made legible.</h1>
+            <p className="mt-4 max-w-sm text-sm leading-6 text-slate-300">Manage devices, policy, people, and keys with the same rules Headscale enforces.</p>
+          </div>
+          <div className="border-t border-slate-700 pt-5 text-sm text-slate-400">Built for operators and members.</div>
         </div>
+
+        <div className="space-y-5 p-6 sm:p-8">
+          <div className="flex items-center gap-2.5 md:hidden">
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent-500 text-slate-950">
+              <ShieldCheck aria-hidden className="size-5" strokeWidth={1.5} />
+            </span>
+            <div>
+              <h1 className="text-display font-semibold leading-none">Headboard</h1>
+              <p className="mt-1 text-sm text-muted-foreground">A control plane for Headscale.</p>
+            </div>
+          </div>
+          <div className="hidden md:block">
+            <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Welcome back</p>
+            <h2 className="mt-1 text-display font-semibold">Sign in to Headboard</h2>
+          </div>
 
         {!unauthenticated && <ErrorNote error={error} />}
         {signIn.error && <ErrorNote error={signIn.error} />}
 
         <form
-          className="space-y-3"
+          className="space-y-4"
           onSubmit={(e) => {
             e.preventDefault()
             signIn.mutate()
           }}
         >
           <label className="block space-y-1">
-            <span className="text-xs text-muted-foreground">Email</span>
+            <span className="text-xs font-medium text-muted-foreground">Email</span>
             <input
               type="email"
               autoComplete="username"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-md border border-border bg-surface-0 px-2.5 py-1.5 text-sm"
+              className="w-full rounded-lg border border-border bg-surface-0 px-3 py-2 text-sm"
             />
           </label>
 
           <label className="block space-y-1">
-            <span className="text-xs text-muted-foreground">Password</span>
+            <span className="text-xs font-medium text-muted-foreground">Password</span>
             <input
               type="password"
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-md border border-border bg-surface-0 px-2.5 py-1.5 text-sm"
+              className="w-full rounded-lg border border-border bg-surface-0 px-3 py-2 text-sm"
             />
           </label>
 
           <button
             type="submit"
             disabled={signIn.isPending || email === '' || password === ''}
-            className="w-full rounded-md bg-accent-500 px-3 py-2 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
+            className="btn h-auto min-h-0 w-full rounded-lg border-0 bg-accent-500 px-3 py-2.5 text-sm font-semibold text-slate-950 shadow-none hover:bg-accent-400 disabled:opacity-50"
           >
             {signIn.isPending ? 'Signing in…' : 'Sign in'}
           </button>
@@ -260,7 +342,7 @@ function Login({ error }: { error: unknown }) {
 
             <a
               href={status.data.loginUrl ?? '/auth/oidc'}
-              className="block rounded-md border border-border px-3 py-2 text-center text-sm font-medium hover:bg-surface-2"
+              className="block rounded-lg border border-border px-3 py-2.5 text-center text-sm font-medium transition-colors hover:border-accent-500/40 hover:bg-surface-2"
             >
               Sign in with your identity provider
             </a>
@@ -269,6 +351,7 @@ function Login({ error }: { error: unknown }) {
             </p>
           </>
         )}
+        </div>
       </div>
     </Centered>
   )

@@ -142,7 +142,7 @@ export function TokenPicker({
   }
 
   return (
-    <div className="relative flex min-h-9 flex-1 flex-wrap items-center gap-1 rounded-md border border-border bg-surface-1 px-1.5 py-1">
+    <div className="relative flex min-h-10 flex-1 flex-wrap items-center gap-1 rounded-lg border border-border bg-surface-1 px-1.5 py-1 shadow-sm transition-colors focus-within:border-accent-500">
       {values.map((v, i) => {
         const issue = validateToken(v, tokens, slot)
 
@@ -151,7 +151,7 @@ export function TokenPicker({
             key={`${v}-${i}`}
             title={issue}
             className={clsx(
-              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs',
+              'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs',
               issue
                 ? 'bg-danger/15 text-danger ring-1 ring-danger/40'
                 : 'bg-surface-2 text-foreground',
@@ -195,7 +195,7 @@ export function TokenPicker({
       />
 
       {open && suggestions.length > 0 && (
-        <ul className="absolute left-0 top-full z-20 mt-1 max-h-56 w-72 overflow-y-auto rounded-md border border-border bg-surface-0 py-1 shadow-lg">
+        <ul className="absolute left-0 top-full z-20 mt-1 max-h-56 w-72 overflow-y-auto rounded-lg border border-border bg-surface-0 py-1 shadow-raised">
           {suggestions.map((s) => (
             <li key={s}>
               <button

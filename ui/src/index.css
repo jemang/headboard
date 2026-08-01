@@ -1,4 +1,7 @@
 @import 'tailwindcss';
+@plugin 'flyonui' {
+  themes: false;
+}
 
 /* Dark is the default theme, not an inversion of a light one: this is an
    operations console that people keep open all day. `.dark` on <html> selects
@@ -11,10 +14,10 @@
 
   /* One accent. Status is carried by a dot plus a label, never by colour
      alone, so the palette stays small on purpose. */
-  --color-accent-400: oklch(0.78 0.14 195);
-  --color-accent-500: oklch(0.7 0.15 195);
-  --color-accent-600: oklch(0.6 0.15 195);
-  --color-accent-700: oklch(0.48 0.13 195);
+  --color-accent-400: oklch(0.85 0.11 174);
+  --color-accent-500: oklch(0.78 0.12 174);
+  --color-accent-600: oklch(0.67 0.13 174);
+  --color-accent-700: oklch(0.54 0.12 174);
 
   /* Status colours are runtime variables for the same reason the surfaces are:
      a hue tuned to read on a dark background is washed out on a light one.
@@ -33,33 +36,97 @@
   --color-border: var(--border);
   --color-foreground: var(--text);
   --color-muted-foreground: var(--text-muted);
+
+  /* A type scale, so routes stop picking sizes ad hoc. `display` is for page
+     titles, `eyebrow` for the small uppercase section headings. */
+  --text-eyebrow: 0.6875rem;
+  --text-eyebrow--line-height: 1rem;
+  --text-eyebrow--letter-spacing: 0.06em;
+  --text-display: 1.375rem;
+  --text-display--line-height: 1.75rem;
+  --text-display--letter-spacing: -0.01em;
+
+  /* Two elevations, not five: raised is anything floating above the page
+     (drawer, palette, dialog), and everything else is flat with a border. */
+  --shadow-raised: 0 20px 56px -18px oklch(0 0 0 / 0.58), 0 4px 14px -5px oklch(0 0 0 / 0.32);
+
+  /* One easing and two durations. Anything slower reads as lag in a console
+     people keep open all day. */
+  --ease-out-quick: cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-fade-in: fade-in 0.12s var(--ease-out-quick);
+  --animate-slide-in: slide-in 0.18s var(--ease-out-quick);
+  --animate-rise: rise 0.16s var(--ease-out-quick);
+  --animate-pulse-soft: pulse-soft 1.6s ease-in-out infinite;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(1.5rem);
+    opacity: 0;
+  }
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(0.5rem);
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-soft {
+  50% {
+    opacity: 0.45;
+  }
 }
 
 @layer base {
   :root {
-    --surface: oklch(0.98 0.002 250);
+    --surface: oklch(0.97 0.006 225);
     --surface-raised: oklch(1 0 0);
-    --surface-sunken: oklch(0.94 0.004 250);
-    --border: oklch(0.9 0.004 250);
-    --text: oklch(0.25 0.01 250);
-    --text-muted: oklch(0.55 0.01 250);
+    --surface-sunken: oklch(0.93 0.012 225);
+    --border: oklch(0.88 0.012 225);
+    --text: oklch(0.24 0.025 235);
+    --text-muted: oklch(0.52 0.024 235);
 
-    --ok: oklch(0.52 0.15 150);
-    --warn: oklch(0.55 0.13 80);
-    --danger: oklch(0.53 0.2 25);
+    --ok: oklch(0.5 0.13 166);
+    --warn: oklch(0.58 0.13 77);
+    --danger: oklch(0.54 0.18 27);
+
+    --color-base-100: var(--surface-raised);
+    --color-base-200: var(--surface-sunken);
+    --color-base-300: var(--border);
+    --color-base-content: var(--text);
+    --color-primary: var(--color-accent-600);
+    --color-primary-content: oklch(0.18 0.02 180);
+    --radius-box: 0.75rem;
+    --radius-field: 0.5rem;
+    --radius-selector: 0.5rem;
   }
 
   .dark {
-    --surface: oklch(0.17 0.008 250);
-    --surface-raised: oklch(0.21 0.009 250);
-    --surface-sunken: oklch(0.26 0.01 250);
-    --border: oklch(0.29 0.01 250);
-    --text: oklch(0.95 0.003 250);
-    --text-muted: oklch(0.66 0.008 250);
+    --surface: oklch(0.14 0.014 235);
+    --surface-raised: oklch(0.18 0.017 235);
+    --surface-sunken: oklch(0.23 0.019 235);
+    --border: oklch(0.3 0.024 235);
+    --text: oklch(0.95 0.012 220);
+    --text-muted: oklch(0.69 0.023 225);
 
-    --ok: oklch(0.72 0.16 150);
-    --warn: oklch(0.78 0.15 80);
-    --danger: oklch(0.65 0.2 25);
+    --ok: oklch(0.8 0.12 166);
+    --warn: oklch(0.84 0.13 77);
+    --danger: oklch(0.7 0.17 27);
+
+    --color-base-100: var(--surface-raised);
+    --color-base-200: var(--surface-sunken);
+    --color-base-300: var(--border);
+    --color-base-content: var(--text);
+    --color-primary: var(--color-accent-500);
+    --color-primary-content: oklch(0.18 0.02 180);
   }
 
   html {
@@ -72,18 +139,41 @@
     -webkit-font-smoothing: antialiased;
     margin: 0;
     min-height: 100dvh;
+    background-image: radial-gradient(circle at top right, oklch(0.75 0.1 174 / 0.09), transparent 32rem);
   }
 
-  /* Technical values — IPs, keys, DNS names — are always monospace. */
+  ::selection {
+    background: oklch(0.74 0.12 174 / 0.28);
+  }
+
+  /* Technical values — IPs, keys, DNS names — are always monospace, and
+     tabular so columns of them line up on the digit. */
   code,
   kbd,
   samp {
     font-family: var(--font-mono);
     font-size: 0.9em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  table {
+    font-variant-numeric: tabular-nums;
   }
 
   :focus-visible {
     outline: 2px solid var(--color-accent-500);
     outline-offset: 2px;
+    border-radius: 0.25rem;
+  }
+
+  /* Motion is decoration here. Anyone who has asked for less gets none. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }

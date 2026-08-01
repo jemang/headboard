@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { api, type Me } from '../lib/api'
 import { Button, ErrorNote, Section, Status } from '../components/ui'
+import { useToast } from '../components/Toast'
+import { KeyRound } from 'lucide-react'
 
 /**
  * Your own account. Small on purpose — its reason to exist is the password
@@ -9,6 +11,7 @@ import { Button, ErrorNote, Section, Status } from '../components/ui'
  * fine for getting in once and no way to leave a deployment.
  */
 export function Account({ me }: { me: Me }) {
+  const toast = useToast()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -21,6 +24,7 @@ export function Account({ me }: { me: Me }) {
       setNext('')
       setConfirm('')
       setDone(true)
+      toast.ok('Password changed')
     },
   })
 
@@ -31,7 +35,8 @@ export function Account({ me }: { me: Me }) {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold">Account</h1>
+        <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Your identity</p>
+        <h1 className="mt-1 text-display font-semibold">Account</h1>
         <p className="text-sm text-muted-foreground">{me.user.email}</p>
       </header>
 
@@ -91,7 +96,7 @@ export function Account({ me }: { me: Me }) {
               problem={mismatch ? 'These do not match.' : undefined}
             />
 
-            <Button type="submit" variant="primary" disabled={!ready || change.isPending}>
+            <Button type="submit" variant="primary" icon={KeyRound} disabled={!ready || change.isPending}>
               {change.isPending ? 'Changing…' : 'Change password'}
             </Button>
           </form>

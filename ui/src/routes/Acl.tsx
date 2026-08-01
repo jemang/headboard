@@ -4,6 +4,10 @@ import { api, type AclRule, type PatchOp, type Policy, type PolicyPreview } from
 import { Button, Badge, Empty, ErrorNote, Input, Section } from '../components/ui'
 import { TokenPicker, validateTokens } from '../components/TokenPicker'
 import { TestsTab } from './AclTests'
+import { useToast } from '../components/Toast'
+import { Loading, Skeleton } from '../components/Skeleton'
+import { rulesWithPendingChanges } from '../lib/policyDraft'
+import { Eye, Plus, Save, Trash2, Undo2 } from 'lucide-react'
 
 type Tab = 'rules' | 'groups' | 'tags' | 'hosts' | 'ssh' | 'auto' | 'tests' | 'raw'
 
@@ -20,6 +24,7 @@ const tabs: { id: Tab; label: string }[] = [
 
 export function Acl() {
   const qc = useQueryClient()
+  const toast = useToast()
   const [tab, setTab] = useState<Tab>('rules')
   const [pending, setPending] = useState<PatchOp[]>([])
   const [rawDraft, setRawDraft] = useState<string | null>(null)
@@ -42,10 +47,23 @@ export function Acl() {
       setRawDraft(null)
       setNote('')
       preview.reset()
+      toast.ok('Policy saved')
     },
+    onError: toast.error,
   })
 
-  if (policy.isPending) return <p className="text-sm text-muted-foreground">Loading policy…</p>
+  if (policy.isPending) {
+    return (
+      <Loading label="Loading policy">
+        <div className="space-y-4">
+          <Skeleton className="h-8 w-56" />
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      </Loading>
+    )
+  }
   if (policy.error) return <ErrorNote error={policy.error} />
 
   const p = policy.data
@@ -68,18 +86,19 @@ export function Acl() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Access control</h1>
+          <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Policy workbench</p>
+          <h1 className="mt-1 text-display font-semibold">Access control</h1>
           <p className="text-sm text-muted-foreground">
             Edited as a form, stored as your HuJSON. Comments and layout outside the fields you
             change are left alone.
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>sha</span>
-          <code className="font-mono">{p.sha256.slice(0, 12)}</code>
+        <div className="rounded-lg border border-border bg-surface-1 px-3 py-2 text-xs text-muted-foreground">
+          <span className="text-eyebrow font-semibold uppercase">Revision </span>
+          <code className="ml-1 font-mono">{p.sha256.slice(0, 12)}</code>
         </div>
       </header>
 
@@ -90,7 +109,7 @@ export function Acl() {
         </div>
       )}
 
-      <nav className="flex flex-wrap gap-1 border-b border-border">
+      <nav className="flex gap-1 overflow-x-auto border-b border-border pb-px" aria-label="Policy sections">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -98,8 +117,8 @@ export function Acl() {
             onClick={() => setTab(t.id)}
             className={
               tab === t.id
-                ? 'border-b-2 border-accent-500 px-3 py-2 text-sm font-medium'
-                : 'border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground'
+                ? 'border-b-2 border-accent-500 px-3 py-2 text-sm font-semibold text-foreground transition-colors'
+                : 'border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-border hover:text-foreground'
             }
           >
             {t.label}
@@ -107,7 +126,7 @@ export function Acl() {
         ))}
       </nav>
 
-      {tab === 'rules' && <RulesTab policy={p} queue={queue} highlight={highlight} />}
+      {tab === 'rules' && <RulesTab policy={p} pending={pending} queue={queue} highlight={highlight} />}
       {tab === 'groups' && <MapListTab policy={p} section="groups" queue={queue} slot="src" />}
       {tab === 'tags' && <MapListTab policy={p} section="tagOwners" queue={queue} slot="src" />}
       {tab === 'hosts' && <HostsTab policy={p} queue={queue} />}
@@ -130,13 +149,14 @@ export function Acl() {
       )}
 
       {change && (
-        <div className="sticky bottom-0 space-y-3 border-t border-border bg-surface-0/95 py-4 backdrop-blur">
+        <div className="sticky bottom-4 z-10 space-y-3 rounded-xl border border-accent-500/35 bg-surface-1/95 p-3 shadow-raised backdrop-blur sm:p-4">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone="accent">
               {rawDraft !== null ? 'raw edit' : `${pending.length} pending change${pending.length === 1 ? '' : 's'}`}
             </Badge>
             <Input value={note} onChange={setNote} placeholder="Why? (saved with the revision)" className="flex-1" />
             <Button
+              icon={Eye}
               onClick={() => preview.mutate({ sha256: p.sha256, ...change })}
               disabled={preview.isPending}
             >
@@ -144,6 +164,7 @@ export function Acl() {
             </Button>
             <Button
               variant="ghost"
+              icon={Undo2}
               onClick={() => {
                 setPending([])
                 setRawDraft(null)
@@ -155,7 +176,6 @@ export function Acl() {
           </div>
 
           {preview.error && <ErrorNote error={preview.error} />}
-          {save.error && <ErrorNote error={save.error} />}
 
           {preview.data && (
             <PreviewPanel
@@ -232,7 +252,7 @@ function PreviewPanel({
         </pre>
       </div>
 
-      <Button variant="primary" onClick={onSave} disabled={!preview.valid || saving}>
+      <Button variant="primary" icon={Save} onClick={onSave} disabled={!preview.valid || saving}>
         {saving ? 'Saving…' : 'Save policy'}
       </Button>
     </div>
@@ -241,29 +261,23 @@ function PreviewPanel({
 
 function RulesTab({
   policy,
+  pending,
   queue,
   highlight,
 }: {
   policy: Policy
+  pending: PatchOp[]
   queue: (op: PatchOp) => void
   highlight: string | null
 }) {
-  const rules = policy.schema?.acls ?? []
-
-  if (rules.length === 0) {
-    return (
-      <Empty
-        title="No rules yet"
-        hint="Without any rules every device can reach every other device."
-      />
-    )
-  }
+  const rules = rulesWithPendingChanges(policy.schema?.acls ?? [], pending)
 
   return (
     <Section
       title={`${rules.length} rule${rules.length === 1 ? '' : 's'}`}
       actions={
         <Button
+          icon={Plus}
           onClick={() =>
             queue({
               op: 'add',
@@ -276,6 +290,12 @@ function RulesTab({
         </Button>
       }
     >
+      {rules.length === 0 && (
+        <Empty
+          title="No rules yet"
+          hint="Add a rule to start defining access."
+        />
+      )}
       <ol className="space-y-2">
         {rules.map((rule, i) => (
           <RuleRow
@@ -364,7 +384,11 @@ function RuleRow({
           >
             Stage
           </Button>
-          <Button variant="ghost" onClick={() => queue({ op: 'remove', path: `/acls/${index}` })}>
+          <Button
+            variant="ghost"
+            icon={Trash2}
+            onClick={() => queue({ op: 'remove', path: `/acls/${index}` })}
+          >
             Delete
           </Button>
         </div>

@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Device, type EffectiveRule, type Me } from '../lib/api'
 import { Badge, Button, Confirm, Drawer, Empty, ErrorNote, Input, Mono, Section, Status } from '../components/ui'
+import { Cell, Row, SpanRow, Table } from '../components/Table'
+import { Loading, Skeleton, SkeletonRows } from '../components/Skeleton'
+import { useToast } from '../components/Toast'
+import { devicePulse } from '../lib/devicePulse'
+import { Laptop, Search, Trash2, Pencil, TimerReset, Check, X } from 'lucide-react'
 
 export function Devices({
   me,
@@ -29,6 +34,7 @@ export function Devices({
   const devices = useQuery({ queryKey: ['devices'], queryFn: api.devices })
 
   const admin = me.capabilities.includes('view:all')
+  const pulse = devicePulse(devices.data?.devices ?? [])
 
   const rows = useMemo(() => {
     const all = devices.data?.devices ?? []
@@ -47,14 +53,14 @@ export function Devices({
     })
   }, [devices.data, filter, onlineOnly])
 
-  if (devices.isPending) return <p className="text-sm text-muted-foreground">Loading devices…</p>
   if (devices.error) return <ErrorNote error={devices.error} />
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">{admin ? 'Devices' : 'My devices'}</h1>
+          <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Tailnet inventory</p>
+          <h1 className="mt-1 text-display font-semibold">{admin ? 'Devices' : 'My devices'}</h1>
           <p className="text-sm text-muted-foreground">
             {admin
               ? 'Every machine in the tailnet.'
@@ -62,7 +68,19 @@ export function Devices({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Input value={filter} onChange={setFilter} placeholder="Filter…" className="w-56" />
+          <div className="relative">
+            <Search
+              aria-hidden
+              className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+              strokeWidth={1.5}
+            />
+            <Input
+              value={filter}
+              onChange={setFilter}
+              placeholder="Filter…"
+              className="w-44 pl-8 sm:w-56"
+            />
+          </div>
           <Button variant={onlineOnly ? 'primary' : 'default'} onClick={() => setOnlineOnly((v) => !v)}>
             Online only
           </Button>
@@ -76,80 +94,124 @@ export function Devices({
         </div>
       )}
 
-      {rows.length === 0 ? (
-        <Empty title="No devices" hint={filter ? 'Nothing matches that filter.' : undefined} />
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-max text-sm">
-            <thead className="bg-surface-1 text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 font-medium">Device</th>
-                <th className="px-3 py-2 font-medium">Addresses</th>
-                <th className="px-3 py-2 font-medium">Owner</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Routes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((d) => (
-                <tr
-                  key={d.id}
-                  onClick={() => setSelected(d.id)}
-                  className="cursor-pointer border-t border-border hover:bg-surface-1"
-                >
-                  <td className="px-3 py-2">
-                    <div className="font-medium">{d.name}</div>
-                    {(d.tags ?? []).length > 0 && (
-                      <div className="mt-0.5 flex gap-1">
-                        {d.tags?.map((t) => (
-                          <Badge key={t} tone="accent">
-                            {t}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-col gap-0.5">
-                      {d.ips.map((ip) => (
-                        <Mono key={ip} value={ip} />
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground">
-                    {d.owner ?? <span className="text-xs">tagged</span>}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-col gap-1">
-                      <Status ok={d.online} label={d.online ? 'online' : 'offline'} />
-                      {d.expired && <Status ok={false} warn label="key expired" />}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-wrap gap-1">
-                      {d.exitNode && <Badge tone="accent">exit node</Badge>}
-                      {(d.subnetRoutes ?? []).map((r) => (
-                        <Badge key={r}>{r}</Badge>
-                      ))}
-                      {(d.advertisedRoutes ?? []).filter(
-                        (r) => !(d.approvedRoutes ?? []).includes(r),
-                      ).length > 0 && <Badge tone="warn">awaiting approval</Badge>}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {devices.data && <NetworkPulse total={pulse.total} online={pulse.online} offline={pulse.offline} expired={pulse.expired} />}
+
+      <Table
+        columns={['Device', 'Addresses', 'Owner', 'Status', 'Routes']}
+      >
+        {devices.isPending ? (
+          <SpanRow columns={5}>
+            <Loading label="Loading devices">
+              <SkeletonRows rows={4} cols={5} />
+            </Loading>
+          </SpanRow>
+        ) : rows.length === 0 ? (
+          <SpanRow columns={5}>
+            <Empty
+              icon={Laptop}
+              title="No devices"
+              hint={
+                filter || onlineOnly
+                  ? 'Nothing matches the current filter.'
+                  : 'Enrol one from the Keys page to see it here.'
+              }
+            />
+          </SpanRow>
+        ) : (
+          rows.map((d) => (
+            <Row key={d.id} onClick={() => setSelected(d.id)} label={`Open ${d.name}`}>
+              <Cell>
+                <div className="font-medium">{d.name}</div>
+                {(d.tags ?? []).length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {d.tags?.map((t) => (
+                      <Badge key={t} tone="accent">
+                        {t}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </Cell>
+              <Cell>
+                <div className="flex flex-col gap-0.5">
+                  {d.ips.map((ip) => (
+                    <Mono key={ip} value={ip} />
+                  ))}
+                </div>
+              </Cell>
+              <Cell muted>{d.owner ?? <span className="text-xs">tagged</span>}</Cell>
+              <Cell>
+                <div className="flex flex-col gap-1">
+                  <Status ok={d.online} label={d.online ? 'online' : 'offline'} />
+                  {d.expired && <Status ok={false} warn label="key expired" />}
+                </div>
+              </Cell>
+              <Cell>
+                <div className="flex flex-wrap gap-1">
+                  {d.exitNode && <Badge tone="accent">exit node</Badge>}
+                  {(d.subnetRoutes ?? []).map((r) => (
+                    <Badge key={r}>{r}</Badge>
+                  ))}
+                  {(d.advertisedRoutes ?? []).filter(
+                    (r) => !(d.approvedRoutes ?? []).includes(r),
+                  ).length > 0 && <Badge tone="warn">awaiting approval</Badge>}
+                </div>
+              </Cell>
+            </Row>
+          ))
+        )}
+      </Table>
 
       <DeviceDrawer id={selected} me={me} onClose={() => setSelected(null)} />
     </div>
   )
 }
 
+function NetworkPulse({
+  total,
+  online,
+  offline,
+  expired,
+}: {
+  total: number
+  online: number
+  offline: number
+  expired: number
+}) {
+  const onlineWidth = total === 0 ? 0 : (online / total) * 100
+
+  return (
+    <section aria-label="Tailnet status" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="rounded-xl border border-border bg-surface-1 p-4 shadow-sm sm:col-span-2 xl:col-span-2">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-eyebrow font-semibold uppercase text-muted-foreground">Network pulse</span>
+          <Status ok={online > 0} label={`${online} online`} />
+        </div>
+        <div className="mt-3 flex items-end gap-2">
+          <strong className="text-3xl font-semibold tracking-tight">{total}</strong>
+          <span className="mb-1 text-sm text-muted-foreground">device{total === 1 ? '' : 's'} in this tailnet</span>
+        </div>
+        <div className="mt-4 h-2 overflow-hidden rounded-full bg-surface-2" aria-hidden>
+          <div className="h-full rounded-full bg-accent-500 transition-[width] duration-300" style={{ width: `${onlineWidth}%` }} />
+        </div>
+      </div>
+      <div className="rounded-xl border border-border bg-surface-1 p-4 shadow-sm">
+        <span className="text-eyebrow font-semibold uppercase text-muted-foreground">Offline</span>
+        <strong className="mt-3 block text-3xl font-semibold tracking-tight">{offline}</strong>
+        <span className="text-sm text-muted-foreground">shown in the table</span>
+      </div>
+      <div className={expired > 0 ? 'rounded-xl border border-warn/45 bg-warn/10 p-4 shadow-sm' : 'rounded-xl border border-border bg-surface-1 p-4 shadow-sm'}>
+        <span className={expired > 0 ? 'text-eyebrow font-semibold uppercase text-warn' : 'text-eyebrow font-semibold uppercase text-muted-foreground'}>Attention</span>
+        <strong className={expired > 0 ? 'mt-3 block text-3xl font-semibold tracking-tight text-warn' : 'mt-3 block text-3xl font-semibold tracking-tight'}>{expired}</strong>
+        <span className="text-sm text-muted-foreground">expired key{expired === 1 ? '' : 's'}</span>
+      </div>
+    </section>
+  )
+}
+
 function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose: () => void }) {
   const qc = useQueryClient()
+  const toast = useToast()
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [tab, setTab] = useState<'inbound' | 'outbound' | 'peers'>('inbound')
@@ -174,20 +236,30 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
 
   const rename = useMutation({
     mutationFn: (name: string) => api.renameDevice(id as number, name),
-    onSuccess: () => {
+    onSuccess: (d) => {
       setRenaming(null)
       invalidate()
+      toast.ok(`Renamed to ${d.name}`)
     },
+    onError: toast.error,
   })
 
   const routes = useMutation({
     mutationFn: (next: string[]) => api.approveRoutes(id as number, next),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate()
+      toast.ok('Routes updated')
+    },
+    onError: toast.error,
   })
 
   const expire = useMutation({
     mutationFn: () => api.expireDevice(id as number),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate()
+      toast.ok('Key expired — the device must sign in again')
+    },
+    onError: toast.error,
   })
 
   const remove = useMutation({
@@ -196,7 +268,9 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
       setConfirmDelete(false)
       onClose()
       invalidate()
+      toast.ok('Device removed')
     },
+    onError: toast.error,
   })
 
   const d = device.data
@@ -212,10 +286,6 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
       {device.error && <ErrorNote error={device.error} />}
       {d && (
         <div className="space-y-6">
-          {(rename.error || routes.error || expire.error || remove.error) && (
-            <ErrorNote error={rename.error ?? routes.error ?? expire.error ?? remove.error} />
-          )}
-
           <dl className="grid grid-cols-2 gap-3 text-sm">
             <Field label="Owner">{d.owner ?? 'tagged device'}</Field>
             <Field label="Status">
@@ -231,24 +301,28 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
             <Section title="Actions">
               <div className="flex flex-wrap gap-2">
                 {renaming === null ? (
-                  <Button onClick={() => setRenaming(d.name)}>Rename</Button>
+                  <Button icon={Pencil} onClick={() => setRenaming(d.name)}>
+                    Rename
+                  </Button>
                 ) : (
                   <div className="flex w-full gap-2">
                     <Input value={renaming} onChange={setRenaming} autoFocus className="flex-1" />
-                    <Button variant="primary" onClick={() => rename.mutate(renaming)}>
+                    <Button variant="primary" icon={Check} onClick={() => rename.mutate(renaming)}>
                       Save
                     </Button>
-                    <Button variant="ghost" onClick={() => setRenaming(null)}>
+                    <Button variant="ghost" icon={X} onClick={() => setRenaming(null)}>
                       Cancel
                     </Button>
                   </div>
                 )}
 
                 {canManage && (
-                  <Button onClick={() => expire.mutate()}>Expire key</Button>
+                  <Button icon={TimerReset} onClick={() => expire.mutate()}>
+                    Expire key
+                  </Button>
                 )}
 
-                <Button variant="danger" onClick={() => setConfirmDelete(true)}>
+                <Button variant="danger" icon={Trash2} onClick={() => setConfirmDelete(true)}>
                   Remove device
                 </Button>
               </div>
@@ -314,7 +388,14 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
               ))}
             </nav>
 
-            {rules.isPending && <p className="text-sm text-muted-foreground">Computing…</p>}
+            {rules.isPending && (
+              <Loading label="Computing effective rules">
+                <div className="space-y-2">
+                  <Skeleton className="h-9 w-full" />
+                  <Skeleton className="h-9 w-4/5" />
+                </div>
+              </Loading>
+            )}
             {rules.error && <ErrorNote error={rules.error} />}
 
             {rules.data && tab === 'inbound' && <RuleList rules={rules.data.inbound} empty="Nothing can reach this device." />}

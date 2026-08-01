@@ -10,6 +10,7 @@ import {
   type Simulation,
 } from '../lib/api'
 import { Badge, Button, Empty, ErrorNote, Input, Section, Status } from '../components/ui'
+import { FlaskConical, Play, Plus, Radar, Trash2 } from 'lucide-react'
 import { TokenPicker, validateTokens } from '../components/TokenPicker'
 
 /**
@@ -133,7 +134,7 @@ function TestsRunner({
       actions={
         <div className="flex items-center gap-2">
           {draft && <Badge tone="accent">testing your pending change</Badge>}
-          <Button variant="primary" disabled={run.isPending} onClick={() => run.mutate()}>
+          <Button variant="primary" icon={Play} disabled={run.isPending} onClick={() => run.mutate()}>
             {run.isPending ? 'Running…' : 'Run tests'}
           </Button>
         </div>
@@ -167,6 +168,7 @@ function TestsRunner({
 
       {entries.length === 0 ? (
         <Empty
+          icon={FlaskConical}
           title="No tests yet"
           hint="A test pins down something the policy must keep true — that ops can still SSH to production, or that contractors still cannot."
         />
@@ -181,6 +183,7 @@ function TestsRunner({
 
                 <Button
                   variant="ghost"
+                  icon={Trash2}
                   className="ml-auto"
                   onClick={() => queue({ op: 'remove', path: pointer })}
                 >
@@ -269,6 +272,7 @@ function AddTest({ policy, queue }: { policy: Policy; queue: (op: PatchOp) => vo
         />
 
         <Button
+          icon={Plus}
           disabled={!ready}
           onClick={() => {
             queue({
@@ -351,7 +355,7 @@ function Simulator({
           <Input value={port} onChange={setPort} placeholder="22" className="w-24" />
         </div>
 
-        <Button variant="primary" disabled={!ready || simulate.isPending} onClick={() => simulate.mutate()}>
+        <Button variant="primary" icon={Radar} disabled={!ready || simulate.isPending} onClick={() => simulate.mutate()}>
           {simulate.isPending ? 'Checking…' : 'Check'}
         </Button>
 

@@ -348,11 +348,13 @@ export const api = {
     expiresIn?: string
     tags?: string[]
   }) =>
-    send<{ key: PreAuthKey; command: string; warning: string }>(
-      'POST',
-      '/api/preauth-keys',
-      body,
-    ),
+    send<{
+      key: PreAuthKey
+      command: string
+      loginServer: string
+      loginServerProblem?: string
+      warning: string
+    }>('POST', '/api/preauth-keys', body),
 
   apiKeys: () => request<{ keys: ApiKey[] }>('/api/headscale-keys'),
   createApiKey: (expiresIn?: string) =>
