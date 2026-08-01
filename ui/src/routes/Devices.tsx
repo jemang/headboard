@@ -6,6 +6,7 @@ import { Cell, Row, SpanRow, Table } from '../components/Table'
 import { Loading, Skeleton, SkeletonRows } from '../components/Skeleton'
 import { useToast } from '../components/Toast'
 import { devicePulse } from '../lib/devicePulse'
+import { approveRoutes, revokeRoutes, routeSummary } from '../lib/deviceRouting'
 import { Laptop, Search, Trash2, Pencil, TimerReset, Check, X } from 'lucide-react'
 
 export function Devices({
@@ -213,6 +214,7 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
   const qc = useQueryClient()
   const toast = useToast()
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [exitAction, setExitAction] = useState<'approve' | 'revoke' | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [tab, setTab] = useState<'inbound' | 'outbound' | 'peers'>('inbound')
 
@@ -245,10 +247,10 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
   })
 
   const routes = useMutation({
-    mutationFn: (next: string[]) => api.approveRoutes(id as number, next),
-    onSuccess: () => {
+    mutationFn: ({ next }: { next: string[]; notice: string }) => api.approveRoutes(id as number, next),
+    onSuccess: (_, { notice }) => {
       invalidate()
-      toast.ok('Routes updated')
+      toast.ok(notice)
     },
     onError: toast.error,
   })
@@ -275,6 +277,7 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
 
   const d = device.data
   const canManage = me.capabilities.includes('manage:devices')
+  const routing = d ? routeSummary(d.advertisedRoutes ?? [], d.approvedRoutes ?? []) : null
 
   return (
     <Drawer
@@ -288,8 +291,22 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
         <div className="space-y-6">
           <dl className="grid grid-cols-2 gap-3 text-sm">
             <Field label="Owner">{d.owner ?? 'tagged device'}</Field>
+            <Field label="Hostname"><code className="font-mono text-xs">{d.hostname}</code></Field>
+            <Field label="Node ID"><code className="font-mono text-xs">{d.id}</code></Field>
             <Field label="Status">
               <Status ok={d.online} label={d.online ? 'online' : 'offline'} />
+            </Field>
+            <Field label="Addresses">
+              <span className="flex flex-wrap gap-1">
+                {d.ips.map((ip) => <Mono key={ip} value={ip} />)}
+              </span>
+            </Field>
+            <Field label="Tags">
+              {(d.tags ?? []).length > 0 ? (
+                <span className="flex flex-wrap gap-1">
+                  {d.tags?.map((tag) => <Badge key={tag} tone="accent">{tag}</Badge>)}
+                </span>
+              ) : '—'}
             </Field>
             <Field label="Last seen">{d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '—'}</Field>
             <Field label="Key expiry">
@@ -329,34 +346,68 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
             </Section>
           )}
 
-          {(d.advertisedRoutes ?? []).length > 0 && canManage && (
-            <Section title="Routes">
-              <ul className="space-y-1">
-                {(d.advertisedRoutes ?? []).map((r) => {
-                  const approved = (d.approvedRoutes ?? []).includes(r)
+          {routing && canManage && (routing.exit.state !== 'none' || routing.subnets.length > 0) && (
+            <Section title="Networking & routing">
+              <div className="space-y-4">
+                {routing.exit.state !== 'none' && (
+                  <div className={routing.exit.state === 'incomplete' ? 'rounded-lg border border-warn/40 bg-warn/10 p-3' : 'rounded-lg border border-border bg-surface-1 p-3'}>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-medium">Exit node</h3>
+                        {routing.exit.state === 'incomplete' ? (
+                          <p className="mt-1 text-xs text-warn">This device must advertise both IPv4 and IPv6 default routes before it can be approved as an exit node.</p>
+                        ) : (
+                          <p className="mt-1 text-xs text-muted-foreground">Lets tailnet users send general internet traffic through this device.</p>
+                        )}
+                      </div>
+                      {routing.exit.state !== 'incomplete' && (
+                        <Status
+                          ok={routing.exit.state === 'approved'}
+                          warn={routing.exit.state !== 'approved'}
+                          label={routing.exit.state === 'approved' ? 'approved' : 'pending approval'}
+                        />
+                      )}
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-mono text-xs text-muted-foreground">{routing.exit.routes.join(' · ')}</span>
+                      {routing.exit.state !== 'incomplete' && (
+                        <Button
+                          disabled={routes.isPending}
+                          onClick={() => setExitAction(routing.exit.state === 'approved' ? 'revoke' : 'approve')}
+                        >
+                          {routing.exit.state === 'approved' ? 'Revoke exit node' : 'Approve exit node'}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
 
-                  return (
-                    <li
-                      key={r}
-                      className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-1 px-3 py-2"
-                    >
-                      <code className="font-mono text-xs">{r}</code>
-                      <Status ok={approved} warn={!approved} label={approved ? 'approved' : 'pending'} />
-                      <Button
-                        onClick={() =>
-                          routes.mutate(
-                            approved
-                              ? (d.approvedRoutes ?? []).filter((x) => x !== r)
-                              : [...(d.approvedRoutes ?? []), r],
-                          )
-                        }
-                      >
-                        {approved ? 'Revoke' : 'Approve'}
-                      </Button>
-                    </li>
-                  )
-                })}
-              </ul>
+                {routing.subnets.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-medium">Subnet routes</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">Allow tailnet devices to reach these private networks through this device.</p>
+                    <ul className="mt-2 space-y-1">
+                      {routing.subnets.map(({ route, approved }) => (
+                        <li key={route} className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-1 px-3 py-2">
+                          <code className="font-mono text-xs">{route}</code>
+                          <Status ok={approved} warn={!approved} label={approved ? 'approved' : 'pending'} />
+                          <Button
+                            disabled={routes.isPending}
+                            onClick={() => routes.mutate({
+                              next: approved
+                                ? revokeRoutes(d.approvedRoutes ?? [], [route])
+                                : approveRoutes(d.approvedRoutes ?? [], [route]),
+                              notice: approved ? `Revoked ${route}` : `Approved ${route}`,
+                            })}
+                          >
+                            {approved ? 'Revoke' : 'Approve'}
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </Section>
           )}
 
@@ -433,6 +484,28 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
         confirmLabel="Remove device"
         onConfirm={() => remove.mutate()}
         onCancel={() => setConfirmDelete(false)}
+      />
+      <Confirm
+        open={exitAction !== null}
+        title={`${exitAction === 'approve' ? 'Approve' : 'Revoke'} exit node for ${d?.name ?? 'this device'}?`}
+        body={
+          exitAction === 'approve'
+            ? <>Tailnet users will be able to send general internet traffic through <span className="font-mono">{d?.name}</span>.</>
+            : <>Tailnet users will no longer be able to use <span className="font-mono">{d?.name}</span> as an exit node.</>
+        }
+        confirmLabel={exitAction === 'approve' ? 'Approve exit node' : 'Revoke exit node'}
+        onConfirm={() => {
+          if (!d || !routing || !exitAction) return
+
+          routes.mutate({
+            next: exitAction === 'approve'
+              ? approveRoutes(d.approvedRoutes ?? [], routing.exit.routes)
+              : revokeRoutes(d.approvedRoutes ?? [], routing.exit.routes),
+            notice: exitAction === 'approve' ? 'Exit node approved' : 'Exit node revoked',
+          })
+          setExitAction(null)
+        }}
+        onCancel={() => setExitAction(null)}
       />
     </Drawer>
   )
