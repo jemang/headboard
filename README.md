@@ -40,9 +40,13 @@ itself — an identity provider is optional and can be added later.
 ## Run
 
 ```sh
-cp .env.example .env   # HEADSCALE_URL and HEADSCALE_API_KEY are the only required values
+cp .env.example .env   # set HEADSCALE_URL, HEADSCALE_API_KEY, and an HTTPS HEADBOARD_PUBLIC_URL
 docker compose up --build
 ```
+
+`HEADBOARD_PUBLIC_URL` must be the externally reachable `https://` address in a normal
+deployment. The service refuses to start over plain HTTP outside `HEADBOARD_DEV=true`, which keeps
+session cookies secure.
 
 On the first start Headboard creates an owner account and prints its password **once**:
 
@@ -77,7 +81,8 @@ Everything is environment variables. The ones without a default must be set.
 | `DATABASE_URL` | `headboard.db` | SQLite file for Headboard's own store. The image points it at `/data/headboard.db` |
 | `HEADBOARD_ADMIN_EMAIL` | `admin@headboard.local` | The owner created on first run |
 | `HEADBOARD_ADMIN_RESET` | `false` | Mint and print a new owner password at startup |
-| `HEADBOARD_PUBLIC_URL` | `http://127.0.0.1:3000` | Where browsers reach Headboard. The OIDC redirect is derived from it |
+| `HEADBOARD_PUBLIC_URL` | `http://127.0.0.1:3000` | Where browsers reach Headboard. Required to use `https://` outside development; the OIDC redirect is derived from it |
+| `HEADBOARD_DEV` | `false` | Enables local development conveniences, including HTTP session cookies. Do not set in production |
 | `OIDC_ISSUER` | — | Optional. Same issuer as Headscale — see below |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | Client registered with that issuer |
 | `HEADBOARD_POLL_INTERVAL` | `5s` | Headscale has no event stream; this is the staleness bound |
@@ -114,10 +119,33 @@ provider accepts several redirect URIs), or set both providers to the same *issu
 | `admin` | Everything except roles |
 | `network-admin` | Devices and the policy, not people or keys |
 | `auditor` | Read everything, change nothing |
-| `member` | Their own devices, and enrol new ones |
+| `member` | Their own devices |
 
 A member sees only machines they own — probing another device's id returns 404, not 403, so the
 tailnet's shape is not leaked by the error.
+
+### Secure admission
+
+New OIDC accounts sign in as **pending** and cannot access Headboard until an owner or admin
+approves them in *People*. This includes members: a role grants only the scope of access after the
+account itself is admitted. Network admins can manage devices and routes, but cannot approve
+people.
+
+Every device must be approved through Headscale's normal registration flow. Start the device
+without a pre-auth key, then give its `hskey-authreq-…` request ID to an owner, admin, or
+network-admin. They approve or reject that request in *Keys*. Headboard never issues a pre-auth
+key.
+
+For an existing deployment, complete this cutover deliberately:
+
+- Set `HEADBOARD_PUBLIC_URL=https://headboard.example.com`; production startup refuses plain HTTP
+  so session cookies are always marked Secure.
+- Restrict Headscale API keys, CLI access, and database access to break-glass infrastructure
+  operators. Direct upstream administration can bypass Headboard's approval workflow.
+- In *People*, approve only the identities that should use Headboard.
+- In *Keys*, review the high-severity automatic-enrolment warning and use the second confirmation
+  to revoke every active legacy pre-auth key. This changes future enrolment only; existing devices
+  stay connected.
 
 ## What it does
 
@@ -133,8 +161,8 @@ tailnet's shape is not leaked by the error.
   sees — computed by Headscale's engine, not an approximation.
 - **Simulator.** "Can A reach B on port N", answered against the destination's own filter (so
   `autogroup:self` rules count), with a link to the policy line responsible.
-- **The usual admin.** Devices, routes, users, pre-auth keys with an install command, API keys,
-  and an audit log of every change.
+- **The usual admin.** Devices, routes, users, manual device-registration approval, Headscale API
+  keys, and an audit log of every change.
 
 Press <kbd>⌘K</kbd> for pages and devices.
 

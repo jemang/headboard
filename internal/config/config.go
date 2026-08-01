@@ -69,7 +69,9 @@ type Config struct {
 	// embedded SPA.
 	Dev bool
 
-	// DevUIProxy is the Vite dev server to proxy to when Dev is set.
+	// DevUIProxy is the optional Vite dev server to proxy to when Dev is set.
+	// An explicitly empty value keeps development behaviour but serves the
+	// embedded UI, which is what the all-in-Docker development stack needs.
 	DevUIProxy string
 
 	// AdminEmail names the local owner created on first run.
@@ -113,7 +115,7 @@ func Load() (Config, error) {
 		OIDCClientID:     os.Getenv("OIDC_CLIENT_ID"),
 		OIDCClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
 		Dev:              envBool("HEADBOARD_DEV", false),
-		DevUIProxy:       env("HEADBOARD_DEV_UI_PROXY", "http://127.0.0.1:5173"),
+		DevUIProxy:       devUIProxy(),
 	}
 
 	poll, err := time.ParseDuration(env("HEADBOARD_POLL_INTERVAL", "5s"))
@@ -138,6 +140,14 @@ func Load() (Config, error) {
 	return c, c.validate()
 }
 
+func devUIProxy() string {
+	if value, ok := os.LookupEnv("HEADBOARD_DEV_UI_PROXY"); ok {
+		return strings.TrimRight(value, "/")
+	}
+
+	return "http://127.0.0.1:5173"
+}
+
 func (c Config) validate() error {
 	var errs []error
 
@@ -159,6 +169,8 @@ func (c Config) validate() error {
 
 	if u, err := url.Parse(c.PublicURL); err != nil || u.Scheme == "" || u.Host == "" {
 		errs = append(errs, fmt.Errorf("HEADBOARD_PUBLIC_URL: %q is not an absolute URL", c.PublicURL))
+	} else if !c.Dev && u.Scheme != "https" {
+		errs = append(errs, errors.New("HEADBOARD_PUBLIC_URL must use https outside HEADBOARD_DEV=true"))
 	}
 
 	// Half-configured OIDC is worse than none: it looks like login should

@@ -7,6 +7,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/jemang/headboard/internal/auth"
+	"github.com/jemang/headboard/internal/store"
 )
 
 // require returns the caller, or an error the handler should return unchanged.
@@ -15,9 +16,13 @@ import (
 // from the shape of a route or from what the UI chose to render — the server
 // decides, per request, from the capability table.
 func require(ctx context.Context, cap auth.Capability) (auth.Principal, error) {
-	p, ok := auth.PrincipalFrom(ctx)
-	if !ok {
-		return auth.Principal{}, huma.Error401Unauthorized("not signed in")
+	p, err := requireAuthenticated(ctx)
+	if err != nil {
+		return auth.Principal{}, err
+	}
+
+	if !p.User.Active() {
+		return auth.Principal{}, admissionDenied(p.User.Admission)
 	}
 
 	if !p.Can(cap) {
@@ -25,6 +30,25 @@ func require(ctx context.Context, cap auth.Capability) (auth.Principal, error) {
 	}
 
 	return p, nil
+}
+
+// requireAuthenticated returns a signed-in principal without granting access
+// to Headboard resources. It is reserved for safe status endpoints.
+func requireAuthenticated(ctx context.Context) (auth.Principal, error) {
+	p, ok := auth.PrincipalFrom(ctx)
+	if !ok {
+		return auth.Principal{}, huma.Error401Unauthorized("not signed in")
+	}
+
+	return p, nil
+}
+
+func admissionDenied(admission store.AdmissionState) error {
+	if admission == store.AdmissionPending {
+		return huma.Error403Forbidden("account approval is pending")
+	}
+
+	return huma.Error403Forbidden("account access was rejected")
 }
 
 // requireLinked is for member-scoped endpoints. An identity that logged in but

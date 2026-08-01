@@ -41,6 +41,13 @@ type roleInput struct {
 	}
 }
 
+type admissionInput struct {
+	ID   int64 `path:"id"`
+	Body struct {
+		Admission store.AdmissionState `json:"admission" enum:"active,rejected"`
+	}
+}
+
 func init() {
 	register(func(api huma.API, deps Deps) {
 		huma.Register(api, huma.Operation{
@@ -153,7 +160,51 @@ func init() {
 
 			return &accountOutput{Body: updated}, nil
 		})
+
+		huma.Register(api, huma.Operation{
+			OperationID: "setAccountAdmission",
+			Method:      http.MethodPut,
+			Path:        "/api/accounts/{id}/admission",
+			Summary:     "Approve or reject a Headboard account",
+			Tags:        []string{"accounts"},
+		}, func(ctx context.Context, in *admissionInput) (*accountOutput, error) {
+			if in.Body.Admission != store.AdmissionActive && in.Body.Admission != store.AdmissionRejected {
+				return nil, huma.Error422UnprocessableEntity("admission must be active or rejected")
+			}
+
+			updated, err := setAccountAdmission(ctx, deps, in.ID, in.Body.Admission)
+			if err != nil {
+				return nil, err
+			}
+
+			return &accountOutput{Body: updated}, nil
+		})
 	})
+}
+
+func setAccountAdmission(ctx context.Context, deps Deps, id int64, admission store.AdmissionState) (store.User, error) {
+	p, err := require(ctx, auth.CapManageUsers)
+	if err != nil {
+		return store.User{}, err
+	}
+
+	if admission != store.AdmissionActive && admission != store.AdmissionRejected {
+		return store.User{}, huma.Error422UnprocessableEntity("admission must be active or rejected")
+	}
+
+	before, err := deps.Store.UserByID(ctx, id)
+	if err != nil {
+		return store.User{}, huma.Error404NotFound("no such account")
+	}
+
+	updated, err := deps.Store.SetAdmission(ctx, id, admission)
+	if err != nil {
+		return store.User{}, statusFor(err, "could not change account admission")
+	}
+
+	audit(ctx, deps, p, "account.admission", "account", id, before.Admission, updated.Admission)
+
+	return updated, nil
 }
 
 // audit records a mutation, best effort. A failed audit write must not undo a

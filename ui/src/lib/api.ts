@@ -59,10 +59,12 @@ export interface Health {
 }
 
 export type Role = 'owner' | 'admin' | 'network-admin' | 'auditor' | 'member'
+export type AdmissionState = 'active' | 'pending' | 'rejected'
 
 export interface Account {
   id: number
   role: Role
+  admission: AdmissionState
   email: string
   displayName: string
   avatarUrl?: string
@@ -76,6 +78,7 @@ export interface Me {
   user: Account
   capabilities: string[]
   linked: boolean
+  admission: AdmissionState
 }
 
 export interface AuthStatus {
@@ -333,6 +336,8 @@ export const api = {
     send<Account>('PUT', `/api/accounts/${id}/headscale-user`, { headscaleUserId }),
   setAccountRole: (id: number, role: Role) =>
     send<Account>('PUT', `/api/accounts/${id}/role`, { role }),
+  setAccountAdmission: (id: number, admission: 'active' | 'rejected') =>
+    send<Account>('PUT', `/api/accounts/${id}/admission`, { admission }),
 
   policy: () => request<Policy>('/api/policy'),
   previewPolicy: (body: { sha256: string; ops?: PatchOp[]; hujson?: string }) =>
@@ -346,20 +351,7 @@ export const api = {
     send<Simulation>('POST', '/api/policy/simulate', body),
 
   preAuthKeys: () => request<{ keys: PreAuthKey[] }>('/api/preauth-keys'),
-  createPreAuthKey: (body: {
-    user?: string
-    reusable?: boolean
-    ephemeral?: boolean
-    expiresIn?: string
-    tags?: string[]
-  }) =>
-    send<{
-      key: PreAuthKey
-      command: string
-      loginServer: string
-      loginServerProblem?: string
-      warning: string
-    }>('POST', '/api/preauth-keys', body),
+  revokeActivePreAuthKeys: () => send<{ expired: string[]; failed: string[] }>('POST', '/api/preauth-keys/revoke-active'),
 
   apiKeys: () => request<{ keys: ApiKey[] }>('/api/headscale-keys'),
   createApiKey: (expiresIn?: string) =>

@@ -15,6 +15,8 @@ import (
 type MeBody struct {
 	User store.User `json:"user"`
 
+	Admission store.AdmissionState `json:"admission"`
+
 	// Capabilities lets the UI hide what the caller cannot use. It is a
 	// courtesy, not a control — every endpoint checks for itself.
 	Capabilities []auth.Capability `json:"capabilities"`
@@ -59,17 +61,12 @@ func init() {
 			Summary:     "The signed-in account and what it may do",
 			Tags:        []string{"auth"},
 		}, func(ctx context.Context, _ *struct{}) (*meOutput, error) {
-			p, err := require(ctx, auth.CapViewSelf)
+			p, err := requireAuthenticated(ctx)
 			if err != nil {
 				return nil, err
 			}
 
-			return &meOutput{Body: MeBody{
-				User:         p.User,
-				Capabilities: auth.Capabilities(p.User.Role),
-				Linked:       p.User.Linked(),
-				Local:        p.User.Local(),
-			}}, nil
+			return &meOutput{Body: meBodyFor(p)}, nil
 		})
 
 		// Unauthenticated on purpose: the login screen has to render
@@ -139,12 +136,22 @@ func init() {
 
 			finish(ctx, deps, p, "account.password", "user", p.User.ID, nil, nil)
 
-			return &struct{ Body MeBody }{Body: MeBody{
-				User:         p.User,
-				Capabilities: auth.Capabilities(p.User.Role),
-				Linked:       p.User.Linked(),
-				Local:        p.User.Local(),
-			}}, nil
+			return &struct{ Body MeBody }{Body: meBodyFor(p)}, nil
 		})
 	})
+}
+
+func meBodyFor(p auth.Principal) MeBody {
+	capabilities := []auth.Capability{}
+	if p.User.Active() {
+		capabilities = auth.Capabilities(p.User.Role)
+	}
+
+	return MeBody{
+		User:         p.User,
+		Admission:    p.User.Admission,
+		Capabilities: capabilities,
+		Linked:       p.User.Linked(),
+		Local:        p.User.Local(),
+	}
 }

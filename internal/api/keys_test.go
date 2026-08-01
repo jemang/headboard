@@ -1,6 +1,49 @@
 package api
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/jemang/headboard/internal/hs"
+)
+
+func TestActivePreAuthKeysSkipsOnlyExpiredKeys(t *testing.T) {
+	now := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Minute)
+	future := now.Add(time.Minute)
+
+	got := activePreAuthKeys([]hs.PreAuthKey{
+		{ID: "expired", Expiry: &past},
+		{ID: "without-expiry"},
+		{ID: "future", Expiry: &future, Used: true},
+	}, now)
+
+	if len(got) != 2 || got[0].ID != "without-expiry" || got[1].ID != "future" {
+		t.Errorf("activePreAuthKeys = %+v, want without-expiry and future", got)
+	}
+}
+
+func TestExpireActivePreAuthKeysReportsPartialFailure(t *testing.T) {
+	now := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	future := now.Add(time.Hour)
+	keys := []hs.PreAuthKey{{ID: "first"}, {ID: "failed", Expiry: &future}}
+
+	expired, failed := expireActivePreAuthKeys(t.Context(), keys, now, func(_ context.Context, id string) error {
+		if id == "failed" {
+			return errors.New("upstream refused")
+		}
+		return nil
+	})
+
+	if len(expired) != 1 || expired[0] != "first" {
+		t.Errorf("expired = %v, want first", expired)
+	}
+	if len(failed) != 1 || failed[0] != "failed" {
+		t.Errorf("failed = %v, want failed", failed)
+	}
+}
 
 func TestIsProtectedAPIKey(t *testing.T) {
 	const prefix = "abcdefghijkl"
@@ -10,55 +53,5 @@ func TestIsProtectedAPIKey(t *testing.T) {
 	}
 	if isProtectedAPIKey("hskey-api-zyxwvutsrqpoother", prefix) {
 		t.Fatal("different API key was protected")
-	}
-}
-
-// The enrolment command is copied to a different machine, so an address only
-// Headboard can resolve fails somewhere nobody is watching. These are the
-// shapes that actually turn up: a compose service name, a localhost binding,
-// and a real host that must not be flagged.
-func TestUnreachableLoginServer(t *testing.T) {
-	cases := []struct {
-		name    string
-		url     string
-		flagged bool
-	}{
-		{"compose service name", "http://headscale-dev:8080", true},
-		{"kubernetes service", "http://headscale:8080", true},
-		{"loopback", "http://127.0.0.1:8080", true},
-		{"localhost", "http://localhost:8080", true},
-		{"ipv6 loopback", "http://[::1]:8080", true},
-		{"public hostname", "https://headscale.example.com", false},
-		{"lan address", "http://192.168.1.191:8080", false},
-		{"internal fqdn", "http://headscale.internal:8080", false},
-		{"empty", "", false},
-		{"nonsense", "://", false},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := unreachableLoginServer(c.url)
-
-			if (got != "") != c.flagged {
-				t.Errorf("unreachableLoginServer(%q) = %q, want flagged=%v", c.url, got, c.flagged)
-			}
-		})
-	}
-}
-
-// Deployments that reach Headscale at one address are the common case, and
-// must not be made to configure a second one.
-func TestLoginServerFallsBackToTheAddressHeadboardUses(t *testing.T) {
-	both := loginServer(Deps{HeadscaleURL: "https://hs.example.com"})
-	if both != "https://hs.example.com" {
-		t.Errorf("loginServer = %q, want the HeadscaleURL", both)
-	}
-
-	split := loginServer(Deps{
-		HeadscaleURL:       "http://headscale:8080",
-		HeadscalePublicURL: "https://hs.example.com",
-	})
-	if split != "https://hs.example.com" {
-		t.Errorf("loginServer = %q, want the public URL to win", split)
 	}
 }

@@ -58,6 +58,10 @@ services:
       HEADSCALE_PUBLIC_URL: http://${HOST_IP:-127.0.0.1}:8080
       HEADSCALE_API_KEY: ${HEADSCALE_API_KEY:-}
       DATABASE_URL: /data/headboard.db
+      HEADBOARD_DEV: "true"
+      # Permit local HTTP but serve the UI built into this image; Vite is not
+      # a separate process inside the container.
+      HEADBOARD_DEV_UI_PROXY: ""
       HEADBOARD_PUBLIC_URL: http://${HOST_IP:-127.0.0.1}:3000
       OIDC_ISSUER: http://${HOST_IP:-127.0.0.1}:9998/oidc
       OIDC_CLIENT_ID: headboard-dev

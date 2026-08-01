@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -42,6 +43,9 @@ func TestFirstLoginBecomesOwner(t *testing.T) {
 	if first.Role != store.RoleOwner {
 		t.Errorf("first login role = %s, want owner", first.Role)
 	}
+	if first.Admission != store.AdmissionActive {
+		t.Errorf("first login admission = %s, want active", first.Admission)
+	}
 
 	second, err := st.UpsertLogin(ctx, identity("https://idp.example", "two", "two@example.com"))
 	if err != nil {
@@ -50,6 +54,9 @@ func TestFirstLoginBecomesOwner(t *testing.T) {
 
 	if second.Role != store.RoleMember {
 		t.Errorf("second login role = %s, want member", second.Role)
+	}
+	if second.Admission != store.AdmissionPending {
+		t.Errorf("second login admission = %s, want pending", second.Admission)
 	}
 }
 
@@ -88,6 +95,106 @@ func TestRepeatLoginKeepsRole(t *testing.T) {
 
 	if u.ID == again.ID {
 		t.Error("the second identity reused the first account's id")
+	}
+}
+
+func TestAdmissionCanBeDecidedAndSurvivesLogin(t *testing.T) {
+	st := openStore(t)
+	ctx := t.Context()
+
+	if _, err := st.UpsertLogin(ctx, identity("https://idp.example", "owner", "owner@example.com")); err != nil {
+		t.Fatalf("owner login: %v", err)
+	}
+
+	pending, err := st.UpsertLogin(ctx, identity("https://idp.example", "member", "member@example.com"))
+	if err != nil {
+		t.Fatalf("member login: %v", err)
+	}
+
+	approved, err := st.SetAdmission(ctx, pending.ID, store.AdmissionActive)
+	if err != nil {
+		t.Fatalf("SetAdmission: %v", err)
+	}
+	if !approved.Active() {
+		t.Errorf("approved account is not active: %+v", approved)
+	}
+
+	again, err := st.UpsertLogin(ctx, identity("https://idp.example", "member", "renamed@example.com"))
+	if err != nil {
+		t.Fatalf("repeat login: %v", err)
+	}
+	if again.Admission != store.AdmissionActive {
+		t.Errorf("repeat login admission = %s, want active", again.Admission)
+	}
+
+	if _, err := st.SetAdmission(ctx, pending.ID, store.AdmissionState("unknown")); err == nil {
+		t.Error("SetAdmission accepted an unknown state")
+	}
+}
+
+func TestAdmissionMigrationMovesOnlyLegacyMembersToPending(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "headboard.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("opening legacy database: %v", err)
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT);
+		INSERT INTO schema_migrations (name) VALUES ('0001_init.sql');
+		CREATE TABLE users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			oidc_iss TEXT NOT NULL,
+			oidc_sub TEXT NOT NULL,
+			password_hash TEXT NOT NULL DEFAULT '',
+			email TEXT NOT NULL DEFAULT '',
+			display_name TEXT NOT NULL DEFAULT '',
+			avatar_url TEXT NOT NULL DEFAULT '',
+			headscale_user_id INTEGER,
+			role TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			last_login_at TEXT
+		);
+	`)
+	if err != nil {
+		t.Fatalf("creating legacy schema: %v", err)
+	}
+
+	for i, role := range []store.Role{
+		store.RoleOwner,
+		store.RoleAdmin,
+		store.RoleNetworkAdmin,
+		store.RoleAuditor,
+		store.RoleMember,
+	} {
+		if _, err := db.Exec(`INSERT INTO users (oidc_iss, oidc_sub, email, display_name, role, created_at)
+			VALUES (?, ?, ?, ?, ?, '2026-08-01T00:00:00Z')`, "https://idp.example", role, role+"@example.com", role, role); err != nil {
+			t.Fatalf("inserting %s: %v", role, err)
+		}
+		_ = i
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("closing legacy database: %v", err)
+	}
+
+	st, err := store.Open(t.Context(), path)
+	if err != nil {
+		t.Fatalf("migrating legacy database: %v", err)
+	}
+	defer st.Close()
+
+	accounts, err := st.ListUsers(t.Context())
+	if err != nil {
+		t.Fatalf("listing migrated accounts: %v", err)
+	}
+	for _, account := range accounts {
+		want := store.AdmissionActive
+		if account.Role == store.RoleMember {
+			want = store.AdmissionPending
+		}
+		if account.Admission != want {
+			t.Errorf("%s admission = %s, want %s", account.Role, account.Admission, want)
+		}
 	}
 }
 
@@ -264,7 +371,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		t.Fatalf("counting migrations: %v", err)
 	}
 
-	if n != 1 {
-		t.Errorf("schema_migrations has %d rows after two opens, want 1", n)
+	if n != 2 {
+		t.Errorf("schema_migrations has %d rows after two opens, want 2", n)
 	}
 }

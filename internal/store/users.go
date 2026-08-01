@@ -60,11 +60,26 @@ func (r Role) Rank() int {
 // Valid reports whether the role is one Headboard knows.
 func (r Role) Valid() bool { return r.Rank() > 0 }
 
+// AdmissionState controls whether an authenticated account may use Headboard.
+// It is separate from Role so an approved member remains narrowly scoped.
+type AdmissionState string
+
+const (
+	AdmissionActive   AdmissionState = "active"
+	AdmissionPending  AdmissionState = "pending"
+	AdmissionRejected AdmissionState = "rejected"
+)
+
+func (s AdmissionState) Valid() bool {
+	return s == AdmissionActive || s == AdmissionPending || s == AdmissionRejected
+}
+
 // User is a Headboard account: an identity plus the role and the Headscale user
 // it maps to.
 type User struct {
-	ID   int64 `json:"id"`
-	Role Role  `json:"role"`
+	ID        int64          `json:"id"`
+	Role      Role           `json:"role"`
+	Admission AdmissionState `json:"admission"`
 
 	OIDCIssuer  string `json:"-"`
 	OIDCSubject string `json:"-"`
@@ -92,9 +107,12 @@ func (u User) Local() bool { return u.OIDCIssuer == LocalIssuer }
 // Linked reports whether this identity maps to a Headscale user.
 func (u User) Linked() bool { return u.HeadscaleUserID != nil }
 
+// Active reports whether this account has been admitted to Headboard.
+func (u User) Active() bool { return u.Admission == AdmissionActive }
+
 const userColumns = `
 	id, oidc_iss, oidc_sub, email, display_name, avatar_url,
-	headscale_user_id, role, created_at, last_login_at, password_hash`
+	headscale_user_id, role, admission, created_at, last_login_at, password_hash`
 
 // scanner is the shared shape of *sql.Row and *sql.Rows.
 type scanner interface{ Scan(dest ...any) error }
@@ -105,6 +123,7 @@ func scanUser(row scanner) (User, error) {
 	err := row.Scan(
 		&u.ID, &u.OIDCIssuer, &u.OIDCSubject, &u.Email, &u.DisplayName,
 		&u.AvatarURL, &u.HeadscaleUserID, &u.Role,
+		&u.Admission,
 		intoTime(&u.CreatedAt), intoNullTime(&u.LastLoginAt), &u.PasswordHash,
 	)
 	if err != nil {
@@ -162,8 +181,9 @@ func (s *Store) UpsertLogin(ctx context.Context, u User) (User, error) {
 
 	row := s.db.QueryRowContext(ctx, `
 		INSERT INTO users (oidc_iss, oidc_sub, email, display_name, avatar_url,
-		                   headscale_user_id, role, last_login_at)
+		                   headscale_user_id, role, admission, last_login_at)
 		VALUES (?, ?, ?, ?, ?, ?,
+		        CASE WHEN EXISTS (SELECT 1 FROM users) THEN ? ELSE ? END,
 		        CASE WHEN EXISTS (SELECT 1 FROM users) THEN ? ELSE ? END,
 		        ?)
 		ON CONFLICT (oidc_iss, oidc_sub) DO UPDATE SET
@@ -173,7 +193,8 @@ func (s *Store) UpsertLogin(ctx context.Context, u User) (User, error) {
 			last_login_at = excluded.last_login_at
 		RETURNING`+userColumns,
 		u.OIDCIssuer, u.OIDCSubject, u.Email, u.DisplayName, u.AvatarURL,
-		u.HeadscaleUserID, string(RoleMember), string(RoleOwner), now,
+		u.HeadscaleUserID, string(RoleMember), string(RoleOwner),
+		string(AdmissionPending), string(AdmissionActive), now,
 	)
 
 	return scanUser(row)
@@ -205,6 +226,18 @@ func (s *Store) SetRole(ctx context.Context, id int64, role Role) (User, error) 
 
 	row := s.db.QueryRowContext(ctx,
 		`UPDATE users SET role = ? WHERE id = ? RETURNING`+userColumns, string(role), id)
+
+	return scanUser(row)
+}
+
+// SetAdmission records an owner's or administrator's access decision.
+func (s *Store) SetAdmission(ctx context.Context, id int64, admission AdmissionState) (User, error) {
+	if !admission.Valid() {
+		return User{}, fmt.Errorf("unknown admission state %q", admission)
+	}
+
+	row := s.db.QueryRowContext(ctx,
+		`UPDATE users SET admission = ? WHERE id = ? RETURNING`+userColumns, admission, id)
 
 	return scanUser(row)
 }
@@ -270,10 +303,10 @@ func (s *Store) CreateLocalOwner(ctx context.Context, email, hash string) (User,
 	}
 
 	row := s.db.QueryRowContext(ctx, `
-		INSERT INTO users (oidc_iss, oidc_sub, password_hash, email, display_name, role)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO users (oidc_iss, oidc_sub, password_hash, email, display_name, role, admission)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		RETURNING`+userColumns,
-		LocalIssuer, normaliseEmail(email), hash, email, "Administrator", string(RoleOwner))
+		LocalIssuer, normaliseEmail(email), hash, email, "Administrator", string(RoleOwner), string(AdmissionActive))
 
 	return scanUser(row)
 }

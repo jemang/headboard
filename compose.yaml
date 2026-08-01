@@ -26,7 +26,7 @@ services:
       # PUBLIC_URL is where browsers reach Headboard; the OIDC redirect is
       # derived from it and must match what the provider has registered:
       # <HEADBOARD_PUBLIC_URL>/auth/callback
-      HEADBOARD_PUBLIC_URL: ${HEADBOARD_PUBLIC_URL:-http://127.0.0.1:3000}
+      HEADBOARD_PUBLIC_URL: ${HEADBOARD_PUBLIC_URL:?set HEADBOARD_PUBLIC_URL to your https URL in .env}
       HEADBOARD_ADMIN_EMAIL: ${HEADBOARD_ADMIN_EMAIL:-admin@headboard.local}
       HEADBOARD_ADMIN_RESET: ${HEADBOARD_ADMIN_RESET:-false}
       OIDC_ISSUER: ${OIDC_ISSUER:-}

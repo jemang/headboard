@@ -2,24 +2,17 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/juanfont/headscale/hscontrol/types"
-
 	"github.com/jemang/headboard/internal/auth"
 	"github.com/jemang/headboard/internal/hs"
-	"github.com/jemang/headboard/internal/tailnet"
 )
 
-// Pre-auth keys and API keys both mint credentials, so both are behind
-// CapManageKeys — except a member minting a key for their own user, which is
-// self-service and scoped to them.
+// API keys mint all-access credentials and pre-auth keys may enrol a device
+// without approval. Both need explicit administrator handling.
 
 type preAuthKeysOutput struct {
 	Body struct {
@@ -27,46 +20,10 @@ type preAuthKeysOutput struct {
 	}
 }
 
-type createPreAuthKeyInput struct {
+type revokeActivePreAuthKeysOutput struct {
 	Body struct {
-		// User the key registers devices as. Optional: a member who
-		// omits it gets their own. Huma treats a field without
-		// omitempty as required, and requiring it here would force
-		// members to name themselves.
-		User string `json:"user,omitempty"`
-
-		Reusable  bool `json:"reusable,omitempty"`
-		Ephemeral bool `json:"ephemeral,omitempty"`
-
-		// ExpiresIn is a duration such as "24h" or "720h". Empty leaves
-		// Headscale's default.
-		ExpiresIn string `json:"expiresIn,omitempty" example:"24h"`
-
-		// Tags make every device registered with this key a tagged node,
-		// owned by the tag rather than by the user.
-		Tags []string `json:"tags,omitempty"`
-	}
-}
-
-type createPreAuthKeyOutput struct {
-	Body struct {
-		Key hs.PreAuthKey `json:"key"`
-
-		// Command is ready to paste on the device being enrolled.
-		Command string `json:"command"`
-
-		// LoginServer is the address inside that command, reported on its
-		// own so the UI can show which host a device is being pointed at.
-		LoginServer string `json:"loginServer"`
-
-		// LoginServerProblem is set when that address looks like one only
-		// Headboard can reach. Advisory — Headboard cannot know what a
-		// device can resolve — but the alternative is a command that copies
-		// cleanly and fails on someone else's machine.
-		LoginServerProblem string `json:"loginServerProblem,omitempty"`
-
-		// Warning states plainly that the secret is not recoverable.
-		Warning string `json:"warning"`
+		Expired []string `json:"expired"`
+		Failed  []string `json:"failed"`
 	}
 }
 
@@ -107,27 +64,15 @@ func init() {
 			Method:      http.MethodGet,
 			Path:        "/api/preauth-keys",
 			Summary:     "Pre-auth keys",
-			Description: "Members see only their own. Secrets are not returned by a list; " +
+			Description: "Legacy automatic-enrolment credentials. Secrets are not returned by a list; " +
 				"Headscale stores a hash.",
 			Tags: []string{"keys"},
 		}, func(ctx context.Context, _ *struct{}) (*preAuthKeysOutput, error) {
-			p, err := require(ctx, auth.CapViewSelf)
-			if err != nil {
+			if _, err := require(ctx, auth.CapManageKeys); err != nil {
 				return nil, err
 			}
 
-			var userID uint
-
-			if !p.Can(auth.CapManageKeys) {
-				u, err := ownHeadscaleUser(ctx, deps, p)
-				if err != nil {
-					return nil, err
-				}
-
-				userID = u.ID
-			}
-
-			keys, err := deps.Mutator.ListPreAuthKeys(ctx, userID)
+			keys, err := deps.Mutator.ListPreAuthKeys(ctx, 0)
 			if err != nil {
 				return nil, upstream(err, "could not list pre-auth keys")
 			}
@@ -146,91 +91,42 @@ func init() {
 			OperationID: "createPreAuthKey",
 			Method:      http.MethodPost,
 			Path:        "/api/preauth-keys",
-			Summary:     "Mint a pre-auth key",
-			Description: "Returns the secret exactly once. Members may only mint keys for " +
-				"themselves, and may not tag them: a tagged key produces devices they would " +
-				"not own.",
-			Tags: []string{"keys"},
-		}, func(ctx context.Context, in *createPreAuthKeyInput) (*createPreAuthKeyOutput, error) {
-			p, err := require(ctx, auth.CapViewSelf)
+			Summary:     "Pre-auth key creation is disabled",
+			Description: "Devices must be explicitly approved through a registration request.",
+			Tags:        []string{"keys"},
+		}, func(ctx context.Context, _ *struct{}) (*struct{}, error) {
+			if _, err := require(ctx, auth.CapManageKeys); err != nil {
+				return nil, err
+			}
+
+			return nil, huma.Error403Forbidden(
+				"automatic device enrolment is disabled; submit a registration request for approval")
+		})
+
+		huma.Register(api, huma.Operation{
+			OperationID: "revokeActivePreAuthKeys",
+			Method:      http.MethodPost,
+			Path:        "/api/preauth-keys/revoke-active",
+			Summary:     "Revoke every active pre-auth key",
+			Tags:        []string{"keys"},
+		}, func(ctx context.Context, _ *struct{}) (*revokeActivePreAuthKeysOutput, error) {
+			p, err := require(ctx, auth.CapManageKeys)
 			if err != nil {
 				return nil, err
 			}
 
-			snap, err := currentSnapshot(deps)
+			keys, err := deps.Mutator.ListPreAuthKeys(ctx, 0)
 			if err != nil {
-				return nil, err
+				return nil, upstream(err, "could not list pre-auth keys")
 			}
 
-			user := in.Body.User
+			expired, failed := expireActivePreAuthKeys(ctx, keys, time.Now(), deps.Mutator.ExpirePreAuthKey)
+			out := &revokeActivePreAuthKeysOutput{}
+			out.Body.Expired = expired
+			out.Body.Failed = failed
 
-			if !p.Can(auth.CapManageKeys) {
-				own, err := ownHeadscaleUser(ctx, deps, p)
-				if err != nil {
-					return nil, err
-				}
-
-				if user != "" && user != own.Name {
-					return nil, huma.Error403Forbidden(
-						"you can only create keys for your own user")
-				}
-
-				user = own.Name
-
-				// A tagged key mints nodes owned by the tag, which
-				// takes them outside the creator's own devices.
-				if len(in.Body.Tags) > 0 {
-					return nil, huma.Error403Forbidden(
-						"only an administrator can create tagged keys")
-				}
-			}
-
-			if user == "" {
-				return nil, huma.Error422UnprocessableEntity("user is required")
-			}
-
-			// The API takes a numeric user id, so the name has to be
-			// resolved against the snapshot first.
-			userID, ok := userIDByName(snap, user)
-			if !ok {
-				return nil, huma.Error404NotFound("no such headscale user: " + user)
-			}
-
-			expiry, err := parseExpiry(in.Body.ExpiresIn)
-			if err != nil {
-				return nil, err
-			}
-
-			for _, tag := range in.Body.Tags {
-				if !strings.HasPrefix(tag, "tag:") {
-					return nil, huma.Error422UnprocessableEntity(
-						"tags must start with \"tag:\", got " + tag)
-				}
-			}
-
-			key, err := deps.Mutator.CreatePreAuthKey(ctx, userID,
-				in.Body.Reusable, in.Body.Ephemeral, expiry, in.Body.Tags)
-			if err != nil {
-				return nil, upstream(err, "could not create the pre-auth key")
-			}
-
-			// The audit entry records that a key was minted and for
-			// whom — never the secret itself.
-			finish(ctx, deps, p, "preauthkey.create", "user", 0, nil, map[string]any{
-				"user":      user,
-				"reusable":  in.Body.Reusable,
-				"ephemeral": in.Body.Ephemeral,
-				"tags":      in.Body.Tags,
-			})
-
-			out := &createPreAuthKeyOutput{}
-			out.Body.Key = key
-			out.Body.Command = enrolCommand(deps, key.Key)
-			out.Body.LoginServer = loginServer(deps)
-			out.Body.Warning = "This key is shown once. Headscale stores only a hash, so it cannot be retrieved again."
-
-			if problem := unreachableLoginServer(out.Body.LoginServer); problem != "" {
-				out.Body.LoginServerProblem = problem
+			if len(expired) > 0 {
+				finish(ctx, deps, p, "preauthkey.revoke_active", "preauthkey", 0, nil, out.Body)
 			}
 
 			return out, nil
@@ -387,36 +283,32 @@ func init() {
 	})
 }
 
-// ownHeadscaleUser resolves the caller's Headscale user, which member-scoped
-// key operations are limited to.
-func ownHeadscaleUser(ctx context.Context, deps Deps, p auth.Principal) (types.User, error) {
-	if !p.User.Linked() {
-		return types.User{}, huma.Error409Conflict(
-			"your account is not linked to a headscale user yet")
+func activePreAuthKeys(keys []hs.PreAuthKey, now time.Time) []hs.PreAuthKey {
+	active := make([]hs.PreAuthKey, 0, len(keys))
+	for _, key := range keys {
+		if key.Expiry != nil && !key.Expiry.After(now) {
+			continue
+		}
+		active = append(active, key)
 	}
 
-	snap, err := currentSnapshot(deps)
-	if err != nil {
-		return types.User{}, err
-	}
-
-	u, ok := headscaleUser(snap, *p.User.HeadscaleUserID)
-	if !ok {
-		return types.User{}, huma.Error409Conflict(
-			"the headscale user this account is linked to no longer exists")
-	}
-
-	return u, nil
+	return active
 }
 
-func userIDByName(snap *tailnet.Snapshot, name string) (uint, bool) {
-	for _, u := range snap.Users {
-		if u.Name == name {
-			return u.ID, true
+func expireActivePreAuthKeys(ctx context.Context, keys []hs.PreAuthKey, now time.Time, expire func(context.Context, string) error) ([]string, []string) {
+	active := activePreAuthKeys(keys, now)
+	expired := make([]string, 0, len(active))
+	failed := make([]string, 0)
+
+	for _, key := range active {
+		if err := expire(ctx, key.ID); err != nil {
+			failed = append(failed, key.ID)
+			continue
 		}
+		expired = append(expired, key.ID)
 	}
 
-	return 0, false
+	return expired, failed
 }
 
 // parseExpiry turns a duration string into an absolute time, because that is
@@ -437,55 +329,6 @@ func parseExpiry(in string) (time.Time, error) {
 	}
 
 	return time.Now().Add(d), nil
-}
-
-// enrolCommand is what gets pasted on the device being added.
-//
-// It uses the public address rather than the one Headboard dials: those differ
-// whenever Headscale is reached over an internal name, and a command naming
-// `headscale:8080` is one a device cannot act on.
-func enrolCommand(deps Deps, key string) string {
-	if key == "" {
-		return ""
-	}
-
-	return fmt.Sprintf("tailscale up --login-server %s --authkey %s",
-		loginServer(deps), key)
-}
-
-// loginServer is the address devices enrol against.
-func loginServer(deps Deps) string {
-	if deps.HeadscalePublicURL != "" {
-		return deps.HeadscalePublicURL
-	}
-
-	return deps.HeadscaleURL
-}
-
-// unreachableLoginServer reports whether the login server looks like an address
-// only this process can resolve, and says why.
-//
-// A guess, deliberately: Headboard cannot know what a device can reach. It is
-// worth guessing because the failure is otherwise silent — the command copies
-// cleanly, and only fails on someone else's machine.
-func unreachableLoginServer(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return ""
-	}
-
-	host := u.Hostname()
-
-	switch {
-	case host == "localhost" || host == "127.0.0.1" || host == "::1":
-		return "points at this server's own loopback address"
-	case !strings.Contains(host, "."):
-		// A bare label resolves inside a container network and nowhere
-		// else — this is exactly the docker-compose service-name case.
-		return "is a bare hostname, which only resolves on Headboard's own network"
-	default:
-		return ""
-	}
 }
 
 const apiKeyPrefixLength = 12

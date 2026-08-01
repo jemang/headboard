@@ -22,6 +22,14 @@ import (
 // not exist or having Headboard sit in the registration path, which it does
 // not. Headscale main's /api/v2 is expected to expose the queue.
 
+type registrationInfoBody struct {
+	HeadscalePublicURL string `json:"headscalePublicUrl"`
+}
+
+type registrationInfoOutput struct {
+	Body registrationInfoBody
+}
+
 type registrationInput struct {
 	Body struct {
 		// AuthID is the hskey-authreq-… value from the registration URL.
@@ -42,6 +50,21 @@ type registrationOutput struct {
 
 func init() {
 	register(func(api huma.API, deps Deps) {
+		huma.Register(api, huma.Operation{
+			OperationID: "registrationInfo",
+			Method:      http.MethodGet,
+			Path:        "/api/registrations/info",
+			Summary:     "Registration command information",
+			Tags:        []string{"registrations"},
+		}, func(ctx context.Context, _ *struct{}) (*registrationInfoOutput, error) {
+			info, err := registrationInfo(ctx, deps)
+			if err != nil {
+				return nil, err
+			}
+
+			return &registrationInfoOutput{Body: info}, nil
+		})
+
 		huma.Register(api, huma.Operation{
 			OperationID: "approveRegistration",
 			Method:      http.MethodPost,
@@ -110,6 +133,14 @@ func init() {
 			return &registrationOutput{}, nil
 		})
 	})
+}
+
+func registrationInfo(ctx context.Context, deps Deps) (registrationInfoBody, error) {
+	if _, err := require(ctx, auth.CapManageDevices); err != nil {
+		return registrationInfoBody{}, err
+	}
+
+	return registrationInfoBody{HeadscalePublicURL: deps.HeadscalePublicURL}, nil
 }
 
 // authIDPrefix and authIDLength mirror types.AuthID, which does not export a

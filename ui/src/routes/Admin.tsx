@@ -5,8 +5,9 @@ import { Badge, Button, Empty, ErrorNote, Input, Mono, Section, Status } from '.
 import { Cell, Row, SpanRow, Table } from '../components/Table'
 import { Loading, SkeletonRows } from '../components/Skeleton'
 import { useToast } from '../components/Toast'
-import { KeyRound, Plus, ShieldCheck, UserPlus, Users } from 'lucide-react'
+import { KeyRound, ShieldCheck, UserPlus, Users } from 'lucide-react'
 import { expiryFromDays, isExpired } from '../lib/apiKeyControls'
+import { preAuthHardening } from '../lib/preAuthHardening'
 
 const roles: Role[] = ['owner', 'admin', 'network-admin', 'auditor', 'member']
 
@@ -52,6 +53,11 @@ export function People({ me }: { me: Me }) {
     },
     onError: toast.error,
   })
+  const admission = useMutation({
+    mutationFn: ({ id, state }: { id: number; state: 'active' | 'rejected' }) => api.setAccountAdmission(id, state),
+    onSuccess: (account) => { invalidate(); toast.ok(`${account.email} is ${account.admission}`) },
+    onError: toast.error,
+  })
 
   if (users.error) return <ErrorNote error={users.error} />
 
@@ -72,9 +78,9 @@ export function People({ me }: { me: Me }) {
         title="Headboard accounts"
         actions={<span className="text-xs text-muted-foreground">who can sign in</span>}
       >
-        <Table columns={['Identity', 'Role', 'Linked Headscale user']}>
+        <Table columns={['Identity', 'Admission', 'Role', 'Linked Headscale user']}>
           {accounts.isPending ? (
-            <SpanRow columns={3}>
+            <SpanRow columns={4}>
               <Loading label="Loading accounts">
                 <SkeletonRows rows={2} cols={3} />
               </Loading>
@@ -85,6 +91,10 @@ export function People({ me }: { me: Me }) {
                     <Cell>
                       <div className="font-medium">{a.displayName || a.email}</div>
                       <div className="text-xs text-muted-foreground">{a.email}</div>
+                    </Cell>
+                    <Cell>
+                      <div className="flex flex-wrap items-center gap-2"><Badge tone={a.admission === 'active' ? 'accent' : a.admission === 'pending' ? 'warn' : 'danger'}>{a.admission}</Badge>
+                      {a.admission === 'pending' && a.id !== me.user.id && <><Button variant="ghost" disabled={admission.isPending} onClick={() => admission.mutate({ id: a.id, state: 'active' })}>Approve</Button><Button variant="ghost" disabled={admission.isPending} onClick={() => admission.mutate({ id: a.id, state: 'rejected' })}>Reject</Button></>}</div>
                     </Cell>
                     <Cell>
                       <select
@@ -122,7 +132,7 @@ export function People({ me }: { me: Me }) {
                   </Row>
             ))
           ) : (
-            <SpanRow columns={3}>
+            <SpanRow columns={4}>
               <Empty
                 icon={Users}
                 title="No accounts yet"
@@ -176,44 +186,17 @@ export function Keys({ me }: { me: Me }) {
   const qc = useQueryClient()
   const toast = useToast()
   const admin = me.capabilities.includes('manage:keys')
+  const deviceManager = me.capabilities.includes('manage:devices')
 
-  const [minted, setMinted] = useState<{
-    command: string
-    warning: string
-    loginServer: string
-    loginServerProblem?: string
-  } | null>(null)
   const [apiKey, setApiKey] = useState<{ key: string; warning: string } | null>(null)
-  const [user, setUser] = useState('')
-  const [reusable, setReusable] = useState(false)
-  const [ephemeral, setEphemeral] = useState(false)
   const [apiKeyLifetime, setApiKeyLifetime] = useState('90')
   const [customApiKeyDays, setCustomApiKeyDays] = useState('')
   const [confirmApiKey, setConfirmApiKey] = useState(false)
+  const [confirmRevokeKeys, setConfirmRevokeKeys] = useState(false)
 
-  const keys = useQuery({ queryKey: ['preauth-keys'], queryFn: api.preAuthKeys })
+  const keys = useQuery({ queryKey: ['preauth-keys'], queryFn: api.preAuthKeys, enabled: admin })
   const users = useQuery({ queryKey: ['tailnet-users'], queryFn: api.tailnetUsers, enabled: admin })
   const headscaleKeys = useQuery({ queryKey: ['api-keys'], queryFn: api.apiKeys, enabled: admin })
-
-  const create = useMutation({
-    mutationFn: () =>
-      api.createPreAuthKey({
-        user: admin && user !== '' ? user : undefined,
-        reusable,
-        ephemeral,
-        expiresIn: '24h',
-      }),
-    onSuccess: (res) => {
-      setMinted({
-        command: res.command,
-        warning: res.warning,
-        loginServer: res.loginServer,
-        loginServerProblem: res.loginServerProblem,
-      })
-      void qc.invalidateQueries({ queryKey: ['preauth-keys'] })
-    },
-    onError: toast.error,
-  })
 
   const apiKeyDays = apiKeyLifetime === 'custom' ? customApiKeyDays : apiKeyLifetime
   const apiKeyExpiry = expiryFromDays(apiKeyDays)
@@ -236,6 +219,16 @@ export function Keys({ me }: { me: Me }) {
     },
     onError: toast.error,
   })
+  const revokePreAuth = useMutation({
+    mutationFn: api.revokeActivePreAuthKeys,
+    onSuccess: (result) => {
+      setConfirmRevokeKeys(false)
+      void qc.invalidateQueries({ queryKey: ['preauth-keys'] })
+      result.failed.length ? toast.error(`${result.failed.length} key revocations failed`) : toast.ok(`${result.expired.length} active pre-auth keys revoked`)
+    },
+    onError: toast.error,
+  })
+  const hardening = preAuthHardening(keys.data?.keys ?? [])
 
   return (
     <div className="space-y-6">
@@ -243,7 +236,7 @@ export function Keys({ me }: { me: Me }) {
         <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Secure enrolment</p>
         <h1 className="mt-1 text-display font-semibold">Keys</h1>
         <p className="text-sm text-muted-foreground">
-          Pre-auth keys enrol devices. Secrets are shown once — Headscale stores only a hash.
+          Every device requires explicit approval. Pre-auth keys are disabled.
         </p>
       </header>
 
@@ -251,68 +244,24 @@ export function Keys({ me }: { me: Me }) {
         <ErrorNote error={keys.error ?? headscaleKeys.error} />
       )}
 
-      <Section title="Enrol a device" actions={<span className="text-xs text-muted-foreground">Create a pre-auth key</span>}>
-        <div className="flex flex-wrap items-center gap-2">
-          {admin && (
-            <select
-              value={user}
-              onChange={(e) => setUser(e.target.value)}
-              className="rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
-            >
-              <option value="">— choose a user —</option>
-              {users.data?.users.map((u) => (
-                <option key={u.id} value={u.name}>
-                  {u.name}
-                </option>
-              ))}
-            </select>
-          )}
-          <Toggle checked={reusable} onChange={setReusable} label="reusable" />
-          <Toggle checked={ephemeral} onChange={setEphemeral} label="ephemeral" />
-          <Button
-            variant="primary"
-            icon={Plus}
-            disabled={create.isPending}
-            onClick={() => create.mutate()}
-          >
-            {create.isPending ? 'Creating…' : 'Create key'}
-          </Button>
-        </div>
-
-        {minted && (
-          <div className="space-y-2 rounded-lg border border-warn/40 bg-warn/10 p-3">
-            <p className="text-sm">{minted.warning}</p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 overflow-x-auto whitespace-nowrap rounded bg-surface-2 px-2 py-1.5 font-mono text-xs">
-                {minted.command}
-              </code>
-              <Mono
-                compact
-                label="the enrolment command"
-                value={minted.command}
-                className="shrink-0 border border-border px-2 py-1.5"
-              />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Enrols against <span className="font-mono">{minted.loginServer}</span>
-            </p>
-
-            {minted.loginServerProblem && (
-              <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs">
-                That address {minted.loginServerProblem}, so this command will not work on another
-                machine. Set <code>HEADSCALE_PUBLIC_URL</code> to the address devices use to reach
-                Headscale.
-              </div>
-            )}
-
-            <Button variant="ghost" onClick={() => setMinted(null)}>
-              I&apos;ve copied it
-            </Button>
-          </div>
-        )}
+      <Section title="Enrol a device" actions={<span className="text-xs text-muted-foreground">manual approval required</span>}>
+        <p className="text-sm text-muted-foreground">
+          Start registration without a pre-auth key, then provide the <code>hskey-authreq-…</code> request ID to an owner, admin, or network admin for approval.
+        </p>
       </Section>
 
-      {admin && <ApproveRegistration users={users.data?.users ?? []} />}
+      {deviceManager && <ApproveRegistration users={users.data?.users ?? []} />}
+
+      {admin && !hardening.compliant && (
+        <Section title="Automatic enrolment risk">
+          <div className="space-y-3 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm">
+            <p>{hardening.active.length} active pre-auth key{hardening.active.length === 1 ? '' : 's'} can still enrol a device without approval.</p>
+            {confirmRevokeKeys ? (
+              <div className="flex flex-wrap gap-2"><Button variant="primary" disabled={revokePreAuth.isPending} onClick={() => revokePreAuth.mutate()}>{revokePreAuth.isPending ? 'Revoking…' : 'Revoke all active keys'}</Button><Button variant="ghost" onClick={() => setConfirmRevokeKeys(false)}>Cancel</Button></div>
+            ) : <Button onClick={() => setConfirmRevokeKeys(true)}>Continue to revoke</Button>}
+          </div>
+        </Section>
+      )}
 
       <Section title="Pre-auth keys">
         <Table columns={['User', 'Flags', 'Tags', 'Expires']}>
@@ -483,28 +432,6 @@ export function Keys({ me }: { me: Me }) {
         </Section>
       )}
     </div>
-  )
-}
-
-function Toggle({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean
-  onChange: (v: boolean) => void
-  label: string
-}) {
-  return (
-    <label className="flex items-center gap-1.5 text-sm">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="size-4 rounded border-border"
-      />
-      {label}
-    </label>
   )
 }
 

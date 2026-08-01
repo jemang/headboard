@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, type Health, type Me } from './lib/api'
 import { connectionPresentation } from './lib/headscaleConnection'
+import { admissionPresentation } from './lib/accountAdmission'
 import { Link, Router, useRouter } from './lib/router'
 import { useTheme, type Theme } from './lib/theme'
 import { Palette } from './components/Palette'
@@ -43,14 +44,19 @@ function Shell() {
     queryKey: ['health'],
     queryFn: api.health,
     refetchInterval: 5000,
+    enabled: me.data?.user.admission === 'active',
   })
 
-  useLiveUpdates(me.data !== undefined)
+  useLiveUpdates(me.data?.user.admission === 'active')
 
   if (me.isPending) return <Centered>Loading…</Centered>
   if (me.error) return <Login error={me.error} />
 
   const user = me.data
+  const admission = admissionPresentation(user.user.admission)
+
+  if (!admission.canUseApp) return <AdmissionScreen email={user.user.email} title={admission.title} detail={admission.detail} />
+
   const known = ['/', '/devices', '/acl', '/people', '/keys', '/account']
 
   return (
@@ -89,6 +95,20 @@ function Shell() {
         </div>
       </main>
     </div>
+  )
+}
+
+function AdmissionScreen({ email, title, detail }: { email: string; title: string; detail: string }) {
+  return (
+    <main className="grid min-h-dvh place-items-center bg-surface-0 p-6">
+      <section className="w-full max-w-md rounded-xl border border-border bg-surface-1 p-6 shadow-sm">
+        <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Headboard access</p>
+        <h1 className="mt-2 text-display font-semibold">{title}</h1>
+        <p className="mt-3 text-sm text-muted-foreground">{detail}</p>
+        <p className="mt-5 text-xs text-muted-foreground">Signed in as {email}</p>
+        <form method="post" action="/auth/logout" className="mt-5"><Button type="submit" variant="ghost" icon={LogOut}>Sign out</Button></form>
+      </section>
+    </main>
   )
 }
 
