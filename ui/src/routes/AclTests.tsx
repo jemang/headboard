@@ -12,6 +12,7 @@ import {
 import { Badge, Button, Empty, ErrorNote, Input, Section, Status } from '../components/ui'
 import { FlaskConical, Play, Plus, Radar, Trash2 } from 'lucide-react'
 import { TokenPicker, validateTokens } from '../components/TokenPicker'
+import { schemaWithPendingChanges } from '../lib/policyDraft'
 
 /**
  * Tests and the simulator sit together because they answer the same question
@@ -56,19 +57,20 @@ function assertionKey(a: Pick<Assertion, 'section' | 'index' | 'kind' | 'dst' | 
  * Expand the document's test entries the same way the server does, so the list
  * is visible before anything is run and results can be merged into it.
  */
-function declaredAssertions(policy: Policy): Assertion[] {
+function declaredAssertions(policy: Policy, draft: PolicyDraft | null): Assertion[] {
   const out: Assertion[] = []
+  const schema = schemaWithPendingChanges(policy.schema, draft?.ops ?? [])
 
   const push = (a: Omit<Assertion, 'passed' | 'pointer'>) =>
     out.push({ ...a, pointer: `/${a.section}/${a.index}`, passed: false })
 
-  ;(policy.schema?.tests ?? []).forEach((t, index) => {
+  ;(schema.tests ?? []).forEach((t, index) => {
     for (const dst of t.accept ?? [])
       push({ section: 'tests', index, kind: 'accept', src: t.src, dst, proto: t.proto })
     for (const dst of t.deny ?? [])
       push({ section: 'tests', index, kind: 'deny', src: t.src, dst, proto: t.proto })
   })
-  ;(policy.schema?.sshTests ?? []).forEach((t, index) => {
+  ;(schema.sshTests ?? []).forEach((t, index) => {
     const kinds = [
       ['accept', t.accept],
       ['deny', t.deny],
@@ -98,7 +100,7 @@ function TestsRunner({
   const entries = useMemo(() => {
     const byEntry = new Map<string, Assertion[]>()
 
-    for (const a of declaredAssertions(policy)) {
+    for (const a of declaredAssertions(policy, draft)) {
       const group = byEntry.get(a.pointer)
 
       if (group) group.push(a)
@@ -106,7 +108,7 @@ function TestsRunner({
     }
 
     return [...byEntry.entries()]
-  }, [policy])
+  }, [policy, draft])
 
   const run = useMutation({
     mutationFn: () => api.runPolicyTests(draft ? { sha256: policy.sha256, ...draft } : undefined),

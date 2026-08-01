@@ -54,6 +54,8 @@ export interface Health {
   headscaleVersion: string
   headscaleServerVersion: string
   headscaleVersionMatch: boolean
+  headscaleState: 'connected' | 'stale' | 'unavailable'
+  headscaleLastSynced?: string
 }
 
 export type Role = 'owner' | 'admin' | 'network-admin' | 'auditor' | 'member'
@@ -157,6 +159,7 @@ export interface SshRule {
   dst: string[]
   users: string[]
   checkPeriod?: string
+  acceptEnv?: string[]
 }
 
 export interface AclSchema {
@@ -168,6 +171,7 @@ export interface AclSchema {
   autoApprovers?: {
     routes?: Record<string, string[]>
     exitNode?: string[]
+    services?: Record<string, string[]>
   }
   tests?: AclTest[]
   sshTests?: SshTest[]
@@ -290,6 +294,7 @@ export interface PreAuthKey {
 export interface ApiKey {
   id: string
   prefix: string
+  protected?: boolean
   expiration?: string
   createdAt?: string
   lastSeen?: string

@@ -198,6 +198,32 @@ func TestPollFailureKeepsPreviousSnapshot(t *testing.T) {
 	}
 }
 
+func TestConnectionStatusReportsStaleAfterPollFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	f := newFake()
+	w := New(f, 20*time.Millisecond, quiet())
+	go w.Run(ctx)
+
+	waitFor(t, "the first snapshot", func() bool {
+		snap, err := w.Current()
+		return snap != nil && err == nil
+	})
+
+	f.set(func(c *fakeClient) { c.err = errors.New("headscale is down") })
+	waitFor(t, "a failed poll", func() bool {
+		w.mu.RLock()
+		defer w.mu.RUnlock()
+		return w.err != nil
+	})
+
+	status := w.ConnectionStatus()
+	if status.State != "stale" || status.LastSynced == nil {
+		t.Fatalf("ConnectionStatus = %+v, want stale with a last sync", status)
+	}
+}
+
 // The whole console re-renders on a revision bump, so a tick where nothing
 // meaningful moved must not produce one.
 func TestRevisionOnlyMovesOnRealChange(t *testing.T) {

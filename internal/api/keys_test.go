@@ -2,6 +2,17 @@ package api
 
 import "testing"
 
+func TestIsProtectedAPIKey(t *testing.T) {
+	const prefix = "abcdefghijkl"
+
+	if !isProtectedAPIKey("hskey-api-"+prefix+"secret", prefix) {
+		t.Fatal("configured service key was not protected")
+	}
+	if isProtectedAPIKey("hskey-api-zyxwvutsrqpoother", prefix) {
+		t.Fatal("different API key was protected")
+	}
+}
+
 // The enrolment command is copied to a different machine, so an address only
 // Headboard can resolve fails somewhere nobody is watching. These are the
 // shapes that actually turn up: a compose service name, a localhost binding,

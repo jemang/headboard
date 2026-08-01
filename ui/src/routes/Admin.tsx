@@ -6,6 +6,7 @@ import { Cell, Row, SpanRow, Table } from '../components/Table'
 import { Loading, SkeletonRows } from '../components/Skeleton'
 import { useToast } from '../components/Toast'
 import { KeyRound, Plus, ShieldCheck, UserPlus, Users } from 'lucide-react'
+import { expiryFromDays, isExpired } from '../lib/apiKeyControls'
 
 const roles: Role[] = ['owner', 'admin', 'network-admin', 'auditor', 'member']
 
@@ -186,6 +187,9 @@ export function Keys({ me }: { me: Me }) {
   const [user, setUser] = useState('')
   const [reusable, setReusable] = useState(false)
   const [ephemeral, setEphemeral] = useState(false)
+  const [apiKeyLifetime, setApiKeyLifetime] = useState('90')
+  const [customApiKeyDays, setCustomApiKeyDays] = useState('')
+  const [confirmApiKey, setConfirmApiKey] = useState(false)
 
   const keys = useQuery({ queryKey: ['preauth-keys'], queryFn: api.preAuthKeys })
   const users = useQuery({ queryKey: ['tailnet-users'], queryFn: api.tailnetUsers, enabled: admin })
@@ -211,10 +215,23 @@ export function Keys({ me }: { me: Me }) {
     onError: toast.error,
   })
 
+  const apiKeyDays = apiKeyLifetime === 'custom' ? customApiKeyDays : apiKeyLifetime
+  const apiKeyExpiry = expiryFromDays(apiKeyDays)
+
   const createApi = useMutation({
-    mutationFn: () => api.createApiKey('2160h'),
+    mutationFn: () => api.createApiKey(apiKeyExpiry),
     onSuccess: (res) => {
       setApiKey(res)
+      setConfirmApiKey(false)
+      void qc.invalidateQueries({ queryKey: ['api-keys'] })
+    },
+    onError: toast.error,
+  })
+
+  const revokeApi = useMutation({
+    mutationFn: (prefix: string) => api.expireApiKey(prefix),
+    onSuccess: () => {
+      toast.ok('API key revoked')
       void qc.invalidateQueries({ queryKey: ['api-keys'] })
     },
     onError: toast.error,
@@ -343,16 +360,82 @@ export function Keys({ me }: { me: Me }) {
       {admin && (
         <Section title="Headscale API keys">
           <div className="rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm">
-            These are all-access admin credentials for the whole tailnet. There is no read-only
-            scope on Headscale v0.29.
+            Use an API key only for trusted server-to-server automation. It grants full administrator
+            access to this tailnet, cannot enrol a device, and has no read-only scope on Headscale v0.29.
           </div>
+
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="block">
+              <span className="text-xs text-muted-foreground">key lifetime</span>
+              <select
+                value={apiKeyLifetime}
+                onChange={(event) => {
+                  setApiKeyLifetime(event.target.value)
+                  setConfirmApiKey(false)
+                }}
+                className="mt-1 block rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
+              >
+                <option value="30">30 days</option>
+                <option value="90">90 days</option>
+                <option value="180">180 days</option>
+                <option value="365">365 days</option>
+                <option value="custom">Custom…</option>
+              </select>
+            </label>
+            {apiKeyLifetime === 'custom' && (
+              <label className="block">
+                <span className="text-xs text-muted-foreground">days</span>
+                <Input
+                  value={customApiKeyDays}
+                  onChange={(value) => {
+                    setCustomApiKeyDays(value)
+                    setConfirmApiKey(false)
+                  }}
+                  placeholder="e.g. 45"
+                  className="mt-1 w-28"
+                />
+              </label>
+            )}
+            <Button
+              icon={KeyRound}
+              disabled={!apiKeyExpiry || createApi.isPending}
+              onClick={() => setConfirmApiKey(true)}
+            >
+              Continue
+            </Button>
+          </div>
+
+          {apiKeyLifetime === 'custom' && customApiKeyDays !== '' && !apiKeyExpiry && (
+            <p className="text-xs text-danger">Enter a positive whole number of days.</p>
+          )}
+
+          {confirmApiKey && apiKeyExpiry && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/40 bg-warn/10 p-3 text-sm">
+              <p className="flex-1">
+                This will create a full-access API key that expires in <strong>{apiKeyDays} days</strong>.
+                It is shown once and cannot be retrieved again.
+              </p>
+              <Button variant="primary" icon={KeyRound} disabled={createApi.isPending} onClick={() => createApi.mutate()}>
+                {createApi.isPending ? 'Minting…' : 'Mint API key'}
+              </Button>
+              <Button variant="ghost" onClick={() => setConfirmApiKey(false)}>Cancel</Button>
+            </div>
+          )}
 
           {apiKey && (
             <div className="space-y-2 rounded-md border border-warn/40 bg-warn/10 p-3">
               <p className="text-sm">{apiKey.warning}</p>
-              <code className="block overflow-x-auto whitespace-nowrap rounded bg-surface-2 px-2 py-1.5 font-mono text-xs">
-                {apiKey.key}
-              </code>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 overflow-x-auto whitespace-nowrap rounded bg-surface-2 px-2 py-1.5 font-mono text-xs">
+                  {apiKey.key}
+                </code>
+                <Mono
+                  compact
+                  label="the API key"
+                  value={apiKey.key}
+                  className="shrink-0 border border-border px-2 py-1.5"
+                />
+              </div>
               <Button variant="ghost" onClick={() => setApiKey(null)}>
                 I&apos;ve copied it
               </Button>
@@ -360,22 +443,43 @@ export function Keys({ me }: { me: Me }) {
           )}
 
           <ul className="space-y-1">
-            {headscaleKeys.data?.keys.map((k) => (
-              <li
-                key={k.id}
-                className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-1 px-3 py-2"
-              >
-                <code className="font-mono text-xs">{k.prefix}…</code>
-                <span className="text-xs text-muted-foreground">
-                  {k.expiration ? `expires ${new Date(k.expiration).toLocaleDateString()}` : 'no expiry'}
-                </span>
-              </li>
-            ))}
-          </ul>
+            {headscaleKeys.data?.keys.map((k) => {
+              const expired = isExpired(k.expiration)
 
-          <Button icon={KeyRound} onClick={() => createApi.mutate()} disabled={createApi.isPending}>
-            Mint an API key
-          </Button>
+              return (
+                <li
+                  key={k.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-1 px-3 py-2"
+                >
+                  <code className="font-mono text-xs">{k.prefix}…</code>
+                  <div className="ml-auto flex items-center gap-2">
+                    {k.protected ? (
+                      <Badge tone="accent">used by Headboard</Badge>
+                    ) : expired ? (
+                      <Badge tone="warn">expired</Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        {k.expiration ? `expires ${new Date(k.expiration).toLocaleDateString()}` : 'no expiry'}
+                      </span>
+                    )}
+                    {!expired && !k.protected && (
+                      <Button
+                        variant="ghost"
+                        disabled={revokeApi.isPending}
+                        onClick={() => {
+                          if (window.confirm(`Revoke API key ${k.prefix}? Any automation using it will stop immediately.`)) {
+                            revokeApi.mutate(k.prefix)
+                          }
+                        }}
+                      >
+                        Revoke
+                      </Button>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
         </Section>
       )}
     </div>

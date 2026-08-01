@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, ApiError, type Me } from './lib/api'
+import { api, ApiError, type Health, type Me } from './lib/api'
+import { connectionPresentation } from './lib/headscaleConnection'
 import { Link, Router, useRouter } from './lib/router'
 import { useTheme, type Theme } from './lib/theme'
 import { Palette } from './components/Palette'
@@ -38,6 +39,11 @@ function Shell() {
     // worth retrying.
     retry: (_, error) => !(error instanceof ApiError && error.status === 401),
   })
+  const health = useQuery({
+    queryKey: ['health'],
+    queryFn: api.health,
+    refetchInterval: 5000,
+  })
 
   useLiveUpdates(me.data !== undefined)
 
@@ -64,7 +70,7 @@ function Shell() {
           <div className="mx-auto flex max-w-7xl items-center gap-3">
             <span className="text-eyebrow font-semibold uppercase text-muted-foreground">Tailnet control plane</span>
             <span className="hidden h-4 w-px bg-border sm:block" />
-            <span className="hidden text-xs text-muted-foreground sm:block">Live state from Headscale</span>
+            <HeadscaleConnectionIndicator health={health.data} unavailable={health.isError} />
             <kbd className="ml-auto hidden items-center gap-1 rounded-md border border-border bg-surface-1 px-2 py-1 font-mono text-[0.6875rem] text-muted-foreground md:inline-flex">
               <span>⌘</span>K to search
             </kbd>
@@ -83,6 +89,23 @@ function Shell() {
         </div>
       </main>
     </div>
+  )
+}
+
+function HeadscaleConnectionIndicator({ health, unavailable }: { health?: Health; unavailable: boolean }) {
+  const presentation = connectionPresentation(unavailable ? { headscaleState: 'unavailable' } : health)
+  const tone = {
+    connected: 'bg-ok',
+    stale: 'bg-warn',
+    unavailable: 'bg-danger',
+    checking: 'bg-muted-foreground/40',
+  }[presentation.tone]
+
+  return (
+    <span className="inline-flex items-center gap-1.5" title={presentation.title}>
+      <span aria-hidden className={`size-2 rounded-full ${tone}`} />
+      <span className="hidden text-xs text-muted-foreground sm:block">{presentation.label}</span>
+    </span>
   )
 }
 

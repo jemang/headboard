@@ -72,8 +72,15 @@ type createPreAuthKeyOutput struct {
 
 type apiKeysOutput struct {
 	Body struct {
-		Keys []hs.APIKey `json:"keys"`
+		Keys []apiKey `json:"keys"`
 	}
+}
+
+// apiKey augments the Headscale response with a public safety marker. It
+// deliberately contains only the configured key's prefix, never its secret.
+type apiKey struct {
+	hs.APIKey
+	Protected bool `json:"protected,omitempty"`
 }
 
 type createAPIKeyInput struct {
@@ -279,10 +286,13 @@ func init() {
 			}
 
 			out := &apiKeysOutput{}
-			out.Body.Keys = keys
+			out.Body.Keys = make([]apiKey, 0, len(keys))
 
-			if out.Body.Keys == nil {
-				out.Body.Keys = []hs.APIKey{}
+			for _, key := range keys {
+				out.Body.Keys = append(out.Body.Keys, apiKey{
+					APIKey:    key,
+					Protected: isProtectedAPIKey(key.Prefix, deps.HeadscaleAPIKeyPrefix),
+				})
 			}
 
 			return out, nil
@@ -334,6 +344,10 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
+			if isProtectedAPIKey(in.Prefix, deps.HeadscaleAPIKeyPrefix) {
+				return nil, huma.Error409Conflict(
+					"cannot revoke Headboard's own API key; replace its server configuration first")
+			}
 
 			if err := deps.Mutator.ExpireAPIKey(ctx, in.Prefix); err != nil {
 				return nil, upstream(err, "could not expire the API key")
@@ -355,6 +369,10 @@ func init() {
 			p, err := require(ctx, auth.CapManageKeys)
 			if err != nil {
 				return nil, err
+			}
+			if isProtectedAPIKey(in.Prefix, deps.HeadscaleAPIKeyPrefix) {
+				return nil, huma.Error409Conflict(
+					"cannot delete Headboard's own API key; replace its server configuration first")
 			}
 
 			if err := deps.Mutator.DeleteAPIKey(ctx, in.Prefix); err != nil {
@@ -470,27 +488,16 @@ func unreachableLoginServer(raw string) string {
 	}
 }
 
-// Headscale API keys are "hskey-api-" followed by a 12-character public prefix
-// and a 64-character secret, all concatenated with no separator
-// (hscontrol/db/api_key.go). There is nothing to split on, so the prefix has to
-// be taken by length.
-const (
-	apiKeyMarker       = "hskey-api-"
-	apiKeyPrefixLength = 12
-	legacyPrefixLength = 7
-)
+const apiKeyPrefixLength = 12
 
 // keyPrefix is the public part of an API key: what identifies it for
 // revocation. Everything after it is the secret.
-func keyPrefix(key string) string {
-	body := strings.TrimPrefix(key, apiKeyMarker)
+func keyPrefix(key string) string { return hs.APIKeyPrefix(key) }
 
-	n := apiKeyPrefixLength
-	if len(body) < n {
-		n = len(body)
-	}
-
-	return body[:n]
+// isProtectedAPIKey identifies the credential Headboard itself uses. Prefixes
+// are public, so matching them does not expose the configured secret.
+func isProtectedAPIKey(prefix, protectedPrefix string) bool {
+	return protectedPrefix != "" && hs.APIKeyPrefix(prefix) == protectedPrefix
 }
 
 // safePrefix bounds a caller-supplied prefix before it is written anywhere.

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -27,6 +28,13 @@ type HealthBody struct {
 	// a different policy engine than the one enforcing traffic, so the UI
 	// shows a banner rather than presenting them as authoritative.
 	HeadscaleVersionMatch bool `json:"headscaleVersionMatch" doc:"Whether the server's version matches the compiled-in policy engine."`
+
+	// HeadscaleState reports the latest authenticated tailnet poll state. It is
+	// connected, stale, or unavailable; error details are never exposed.
+	HeadscaleState string `json:"headscaleState" doc:"Authenticated Headscale connection state."`
+
+	// HeadscaleLastSynced is the most recent successful authenticated poll.
+	HeadscaleLastSynced *time.Time `json:"headscaleLastSynced,omitempty" doc:"Most recent successful Headscale sync."`
 }
 
 type healthOutput struct {
@@ -42,13 +50,28 @@ func init() {
 			Summary:     "Liveness and build information",
 			Tags:        []string{"meta"},
 		}, func(ctx context.Context, _ *struct{}) (*healthOutput, error) {
-			return &healthOutput{Body: HealthBody{
-				Status:                 "ok",
-				Version:                deps.Version,
-				HeadscaleVersion:       deps.HeadscaleVersion,
-				HeadscaleServerVersion: deps.Probe.Server,
-				HeadscaleVersionMatch:  deps.Probe.Match,
-			}}, nil
+			return &healthOutput{Body: healthBodyFor(deps)}, nil
 		})
 	})
+}
+
+func healthBodyFor(deps Deps) HealthBody {
+	body := HealthBody{
+		Status:                 "ok",
+		Version:                deps.Version,
+		HeadscaleVersion:       deps.HeadscaleVersion,
+		HeadscaleServerVersion: deps.Probe.Server,
+		HeadscaleVersionMatch:  deps.Probe.Match,
+		HeadscaleState:         "unavailable",
+	}
+
+	if deps.Tailnet == nil {
+		return body
+	}
+
+	connection := deps.Tailnet.ConnectionStatus()
+	body.HeadscaleState = connection.State
+	body.HeadscaleLastSynced = connection.LastSynced
+
+	return body
 }

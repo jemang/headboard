@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type AclRule, type PatchOp, type Policy, type PolicyPreview } from '../lib/api'
+import { api, type AclRule, type PatchOp, type Policy, type PolicyPreview, type SshRule } from '../lib/api'
 import { Button, Badge, Empty, ErrorNote, Input, Section } from '../components/ui'
 import { TokenPicker, validateTokens } from '../components/TokenPicker'
 import { TestsTab } from './AclTests'
 import { useToast } from '../components/Toast'
 import { Loading, Skeleton } from '../components/Skeleton'
-import { rulesWithPendingChanges } from '../lib/policyDraft'
+import { rulesWithPendingChanges, schemaWithPendingChanges } from '../lib/policyDraft'
 import { Eye, Plus, Save, Trash2, Undo2 } from 'lucide-react'
 
 type Tab = 'rules' | 'groups' | 'tags' | 'hosts' | 'ssh' | 'auto' | 'tests' | 'raw'
@@ -127,11 +127,11 @@ export function Acl() {
       </nav>
 
       {tab === 'rules' && <RulesTab policy={p} pending={pending} queue={queue} highlight={highlight} />}
-      {tab === 'groups' && <MapListTab policy={p} section="groups" queue={queue} slot="src" />}
-      {tab === 'tags' && <MapListTab policy={p} section="tagOwners" queue={queue} slot="src" />}
-      {tab === 'hosts' && <HostsTab policy={p} queue={queue} />}
-      {tab === 'ssh' && <SshTab policy={p} queue={queue} />}
-      {tab === 'auto' && <AutoApproversTab policy={p} />}
+      {tab === 'groups' && <MapListTab policy={p} pending={pending} section="groups" queue={queue} slot="src" />}
+      {tab === 'tags' && <MapListTab policy={p} pending={pending} section="tagOwners" queue={queue} slot="src" />}
+      {tab === 'hosts' && <HostsTab policy={p} pending={pending} queue={queue} />}
+      {tab === 'ssh' && <SshTab policy={p} pending={pending} queue={queue} />}
+      {tab === 'auto' && <AutoApproversTab policy={p} pending={pending} queue={queue} />}
       {tab === 'tests' && (
         <TestsTab policy={p} draft={change} queue={queue} onJump={jump} />
       )}
@@ -410,18 +410,19 @@ function RuleRow({
 /** groups and tagOwners share a shape: a name mapped to a list of owners. */
 function MapListTab({
   policy,
+  pending,
   section,
   queue,
   slot,
 }: {
   policy: Policy
+  pending: PatchOp[]
   section: 'groups' | 'tagOwners'
   queue: (op: PatchOp) => void
   slot: 'src'
 }) {
-  const entries = Object.entries(
-    (section === 'groups' ? policy.schema?.groups : policy.schema?.tagOwners) ?? {},
-  )
+  const draft = schemaWithPendingChanges(policy.schema, pending)
+  const entries = Object.entries((section === 'groups' ? draft.groups : draft.tagOwners) ?? {})
   const [name, setName] = useState('')
 
   const prefix = section === 'groups' ? 'group:' : 'tag:'
@@ -477,23 +478,29 @@ function MapListRow({
 }) {
   const [values, setValues] = useState(members)
   const dirty = JSON.stringify(values) !== JSON.stringify(members)
+  const issues = validateTokens(values, policy.tokens, slot)
 
   return (
     <li className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-1 p-2.5">
       <code className="w-48 shrink-0 font-mono text-xs">{name}</code>
       <TokenPicker values={values} onChange={setValues} tokens={policy.tokens} slot={slot} />
-      <Button disabled={!dirty} onClick={() => onStage(values)}>
+      <Button disabled={!dirty || issues.length > 0} onClick={() => onStage(values)}>
         Stage
       </Button>
       <Button variant="ghost" onClick={onDelete}>
         Delete
       </Button>
+      {issues.length > 0 && (
+        <ul className="w-full space-y-0.5 text-xs text-danger">
+          {issues.map((issue) => <li key={issue.token}><span className="font-mono">{issue.token}</span> — {issue.reason}</li>)}
+        </ul>
+      )}
     </li>
   )
 }
 
-function HostsTab({ policy, queue }: { policy: Policy; queue: (op: PatchOp) => void }) {
-  const entries = Object.entries(policy.schema?.hosts ?? {})
+function HostsTab({ policy, pending, queue }: { policy: Policy; pending: PatchOp[]; queue: (op: PatchOp) => void }) {
+  const entries = Object.entries(schemaWithPendingChanges(policy.schema, pending).hosts ?? {})
   const [name, setName] = useState('')
   const [cidr, setCidr] = useState('')
 
@@ -503,16 +510,12 @@ function HostsTab({ policy, queue }: { policy: Policy; queue: (op: PatchOp) => v
 
       <ul className="space-y-2">
         {entries.map(([host, value]) => (
-          <li
+          <HostRow
             key={host}
-            className="flex items-center gap-2 rounded-lg border border-border bg-surface-1 p-2.5"
-          >
-            <code className="w-48 font-mono text-xs">{host}</code>
-            <code className="flex-1 font-mono text-xs text-muted-foreground">{value}</code>
-            <Button variant="ghost" onClick={() => queue({ op: 'remove', path: `/hosts/${escape(host)}` })}>
-              Delete
-            </Button>
-          </li>
+            host={host}
+            value={value}
+            queue={queue}
+          />
         ))}
       </ul>
 
@@ -534,8 +537,28 @@ function HostsTab({ policy, queue }: { policy: Policy; queue: (op: PatchOp) => v
   )
 }
 
-function SshTab({ policy, queue }: { policy: Policy; queue: (op: PatchOp) => void }) {
-  const rules = policy.schema?.ssh ?? []
+function HostRow({ host, value, queue }: { host: string; value: string; queue: (op: PatchOp) => void }) {
+  const [cidr, setCidr] = useState(value)
+
+  return (
+    <li className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-1 p-2.5">
+      <code className="w-48 font-mono text-xs">{host}</code>
+      <Input value={cidr} onChange={setCidr} className="min-w-48 flex-1 font-mono text-xs" />
+      <Button
+        disabled={cidr.trim() === '' || cidr === value}
+        onClick={() => queue({ op: 'replace', path: `/hosts/${escape(host)}`, value: cidr.trim() })}
+      >
+        Stage
+      </Button>
+      <Button variant="ghost" onClick={() => queue({ op: 'remove', path: `/hosts/${escape(host)}` })}>
+        Delete
+      </Button>
+    </li>
+  )
+}
+
+function SshTab({ policy, pending, queue }: { policy: Policy; pending: PatchOp[]; queue: (op: PatchOp) => void }) {
+  const rules = schemaWithPendingChanges(policy.schema, pending).ssh ?? []
 
   return (
     <Section
@@ -558,55 +581,218 @@ function SshTab({ policy, queue }: { policy: Policy; queue: (op: PatchOp) => voi
 
       <ul className="space-y-2">
         {rules.map((r, i) => (
-          <li key={i} className="rounded-lg border border-border bg-surface-1 p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={r.action === 'check' ? 'warn' : 'accent'}>{r.action}</Badge>
-              <code className="font-mono text-xs">{(r.src ?? []).join(', ')}</code>
-              <span className="text-muted-foreground">→</span>
-              <code className="font-mono text-xs">{(r.dst ?? []).join(', ')}</code>
-              <span className="text-xs text-muted-foreground">as</span>
-              <code className="font-mono text-xs">{(r.users ?? []).join(', ')}</code>
-              <Button variant="ghost" className="ml-auto" onClick={() => queue({ op: 'remove', path: `/ssh/${i}` })}>
-                Delete
-              </Button>
-            </div>
-          </li>
+          <SshRow key={i} index={i} rule={r} policy={policy} queue={queue} />
         ))}
       </ul>
     </Section>
   )
 }
 
-function AutoApproversTab({ policy }: { policy: Policy }) {
-  const auto = policy.schema?.autoApprovers
+function SshRow({
+  index,
+  rule,
+  policy,
+  queue,
+}: {
+  index: number
+  rule: SshRule
+  policy: Policy
+  queue: (op: PatchOp) => void
+}) {
+  const [action, setAction] = useState(rule.action)
+  const [src, setSrc] = useState(rule.src ?? [])
+  const [dst, setDst] = useState(rule.dst ?? [])
+  const [users, setUsers] = useState((rule.users ?? []).join(', '))
+  const [checkPeriod, setCheckPeriod] = useState(rule.checkPeriod ?? '')
+  const nextUsers = users.split(',').map((user) => user.trim()).filter(Boolean)
+  const issues = [...validateTokens(src, policy.tokens, 'src'), ...validateTokens(dst, policy.tokens, 'src')]
+  const next = { ...rule, action, src, dst, users: nextUsers, ...(checkPeriod ? { checkPeriod } : { checkPeriod: undefined }) }
+  const dirty = JSON.stringify(next) !== JSON.stringify(rule)
 
-  if (!auto || (!auto.routes && !auto.exitNode)) {
-    return (
-      <Empty
-        title="No auto-approvers"
-        hint="Every advertised route needs an admin to approve it by hand."
-      />
-    )
-  }
+  return (
+    <li className="space-y-3 rounded-lg border border-border bg-surface-1 p-3">
+      <div className="flex flex-wrap items-end gap-2">
+        <div>
+          <span className="text-xs text-muted-foreground">action</span>
+          <select
+            value={action}
+            onChange={(event) => setAction(event.target.value)}
+            className="block rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
+          >
+            <option value="accept">accept</option>
+            <option value="check">check</option>
+          </select>
+        </div>
+        <div className="min-w-56 flex-1">
+          <span className="text-xs text-muted-foreground">from</span>
+          <TokenPicker values={src} onChange={setSrc} tokens={policy.tokens} slot="src" placeholder="group:eng…" />
+        </div>
+        <div className="min-w-56 flex-1">
+          <span className="text-xs text-muted-foreground">to</span>
+          <TokenPicker values={dst} onChange={setDst} tokens={policy.tokens} slot="src" placeholder="tag:prod…" />
+        </div>
+        <div className="min-w-40 flex-1">
+          <span className="text-xs text-muted-foreground">users</span>
+          <Input value={users} onChange={setUsers} placeholder="root, autogroup:nonroot" className="font-mono text-xs" />
+        </div>
+        {action === 'check' && (
+          <div className="w-32">
+            <span className="text-xs text-muted-foreground">check period</span>
+            <Input value={checkPeriod} onChange={setCheckPeriod} placeholder="12h" className="font-mono text-xs" />
+          </div>
+        )}
+        <Button disabled={!dirty || src.length === 0 || dst.length === 0 || nextUsers.length === 0 || issues.length > 0} onClick={() => queue({ op: 'replace', path: `/ssh/${index}`, value: next })}>
+          Stage
+        </Button>
+        <Button variant="ghost" icon={Trash2} onClick={() => queue({ op: 'remove', path: `/ssh/${index}` })}>
+          Delete
+        </Button>
+      </div>
+      {issues.length > 0 && (
+        <ul className="space-y-0.5 text-xs text-danger">
+          {issues.map((issue) => <li key={issue.token}><span className="font-mono">{issue.token}</span> — {issue.reason}</li>)}
+        </ul>
+      )}
+    </li>
+  )
+}
+
+function AutoApproversTab({
+  policy,
+  pending,
+  queue,
+}: {
+  policy: Policy
+  pending: PatchOp[]
+  queue: (op: PatchOp) => void
+}) {
+  const auto = schemaWithPendingChanges(policy.schema, pending).autoApprovers
 
   return (
     <div className="space-y-4">
-      <Section title="routes">
-        <ul className="space-y-1">
-          {Object.entries(auto.routes ?? {}).map(([cidr, owners]) => (
-            <li key={cidr} className="flex items-center gap-3 rounded-md border border-border bg-surface-1 px-3 py-2">
-              <code className="w-48 font-mono text-xs">{cidr}</code>
-              <code className="font-mono text-xs text-muted-foreground">{owners.join(', ')}</code>
-            </li>
-          ))}
-        </ul>
-      </Section>
+      <AutoApproverMap
+        title="routes"
+        entries={auto?.routes ?? {}}
+        policy={policy}
+        placeholder="10.0.0.0/24"
+        onAdd={(name) => queueAutoApproverMap(queue, auto, 'routes', name)}
+        onStage={(name, owners) => queue({ op: 'replace', path: `/autoApprovers/routes/${escape(name)}`, value: owners })}
+        onDelete={(name) => queue({ op: 'remove', path: `/autoApprovers/routes/${escape(name)}` })}
+      />
 
-      <Section title="exit nodes">
-        <code className="font-mono text-xs">{(auto.exitNode ?? []).join(', ') || '—'}</code>
-      </Section>
+      <ExitNodeApprovers policy={policy} owners={auto?.exitNode ?? []} auto={auto} queue={queue} />
+
+      <AutoApproverMap
+        title="services"
+        entries={auto?.services ?? {}}
+        policy={policy}
+        placeholder="svc:example"
+        onAdd={(name) => queueAutoApproverMap(queue, auto, 'services', name)}
+        onStage={(name, owners) => queue({ op: 'replace', path: `/autoApprovers/services/${escape(name)}`, value: owners })}
+        onDelete={(name) => queue({ op: 'remove', path: `/autoApprovers/services/${escape(name)}` })}
+      />
     </div>
   )
+}
+
+function AutoApproverMap({
+  title,
+  entries,
+  policy,
+  placeholder,
+  onAdd,
+  onStage,
+  onDelete,
+}: {
+  title: string
+  entries: Record<string, string[]>
+  policy: Policy
+  placeholder: string
+  onAdd: (name: string) => void
+  onStage: (name: string, owners: string[]) => void
+  onDelete: (name: string) => void
+}) {
+  const [name, setName] = useState('')
+
+  return (
+    <Section title={title}>
+      {Object.keys(entries).length === 0 && (
+        <Empty title={`No ${title} auto-approvers`} hint="Headscale will require manual approval." />
+      )}
+      <ul className="space-y-2">
+        {Object.entries(entries).map(([key, owners]) => (
+          <MapListRow
+            key={key}
+            name={key}
+            members={owners}
+            policy={policy}
+            slot="src"
+            onStage={(next) => onStage(key, next)}
+            onDelete={() => onDelete(key)}
+          />
+        ))}
+      </ul>
+      <div className="flex items-center gap-2">
+        <Input value={name} onChange={setName} placeholder={placeholder} className="w-64 font-mono text-xs" />
+        <Button disabled={name.trim() === ''} onClick={() => { onAdd(name.trim()); setName('') }}>
+          Add
+        </Button>
+      </div>
+    </Section>
+  )
+}
+
+function ExitNodeApprovers({
+  policy,
+  owners,
+  auto,
+  queue,
+}: {
+  policy: Policy
+  owners: string[]
+  auto: NonNullable<Policy['schema']>['autoApprovers']
+  queue: (op: PatchOp) => void
+}) {
+  const [values, setValues] = useState(owners)
+  const issues = validateTokens(values, policy.tokens, 'src')
+  const dirty = JSON.stringify(values) !== JSON.stringify(owners)
+
+  return (
+    <Section title="exit nodes">
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-64 flex-1">
+          <span className="text-xs text-muted-foreground">approved for</span>
+          <TokenPicker values={values} onChange={setValues} tokens={policy.tokens} slot="src" placeholder="group:ops…" />
+        </div>
+        <Button
+          disabled={!dirty || issues.length > 0}
+          onClick={() => {
+            if (!auto) queue({ op: 'add', path: '/autoApprovers', value: { exitNode: values } })
+            else if (!auto.exitNode) queue({ op: 'add', path: '/autoApprovers/exitNode', value: values })
+            else queue({ op: 'replace', path: '/autoApprovers/exitNode', value: values })
+          }}
+        >
+          Stage
+        </Button>
+      </div>
+      {issues.length > 0 && (
+        <ul className="mt-2 space-y-0.5 text-xs text-danger">
+          {issues.map((issue) => <li key={issue.token}><span className="font-mono">{issue.token}</span> — {issue.reason}</li>)}
+        </ul>
+      )}
+    </Section>
+  )
+}
+
+function queueAutoApproverMap(
+  queue: (op: PatchOp) => void,
+  auto: NonNullable<Policy['schema']>['autoApprovers'],
+  section: 'routes' | 'services',
+  name: string,
+) {
+  if (!auto) queue({ op: 'add', path: '/autoApprovers', value: { [section]: { [name]: [] } } })
+  else if (!auto[section]) queue({ op: 'add', path: `/autoApprovers/${section}`, value: { [name]: [] } })
+  else queue({ op: 'add', path: `/autoApprovers/${section}/${escape(name)}`, value: [] })
 }
 
 function RawTab({

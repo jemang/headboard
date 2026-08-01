@@ -43,6 +43,14 @@ type Snapshot struct {
 	FetchedAt time.Time
 }
 
+// ConnectionStatus is the safe, public summary of the authenticated poller.
+// It intentionally omits the upstream error, which could contain internal
+// connection details and is not useful in the browser.
+type ConnectionStatus struct {
+	State      string
+	LastSynced *time.Time
+}
+
 // Watcher polls Headscale and fans changes out to subscribers.
 type Watcher struct {
 	client   hs.Client
@@ -118,6 +126,25 @@ func (w *Watcher) Current() (*Snapshot, error) {
 	}
 
 	return w.snap, nil
+}
+
+// ConnectionStatus reports whether the latest authenticated Headscale poll
+// succeeded. A failed poll retains its last good snapshot, which is useful but
+// stale and must not be presented as a live connection.
+func (w *Watcher) ConnectionStatus() ConnectionStatus {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	if w.snap == nil {
+		return ConnectionStatus{State: "unavailable"}
+	}
+
+	lastSynced := w.snap.FetchedAt
+	if w.err != nil {
+		return ConnectionStatus{State: "stale", LastSynced: &lastSynced}
+	}
+
+	return ConnectionStatus{State: "connected", LastSynced: &lastSynced}
 }
 
 func (w *Watcher) poll(ctx context.Context) {

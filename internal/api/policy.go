@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/juanfont/headscale/hscontrol/types"
 
 	"github.com/jemang/headboard/internal/acl"
 	"github.com/jemang/headboard/internal/auth"
@@ -172,7 +173,22 @@ func init() {
 					"note":    in.Body.Note,
 				})
 
-			return loadPolicy(ctx, deps)
+			snap, err := currentSnapshot(deps)
+			if err != nil {
+				return nil, err
+			}
+
+			// loadPolicy would read the old watcher snapshot here. Decode the
+			// just-written text for this response, then refresh shared state for
+			// every other policy consumer.
+			out, err := policyOutputFor(next, snap.Users)
+			if err != nil {
+				return nil, err
+			}
+
+			deps.Tailnet.Invalidate()
+
+			return out, nil
 		})
 
 		huma.Register(api, huma.Operation{
@@ -241,43 +257,61 @@ func loadPolicy(ctx context.Context, deps Deps) (*policyOutput, error) {
 		return nil, err
 	}
 
-	out := &policyOutput{}
-	out.Body.HuJSON = snap.Policy.HuJSON
-	out.Body.SHA256 = snap.PolicySHA256
-	out.Body.Editable = true
+	return policyOutputFor(snap.Policy.HuJSON, snap.Users)
+}
 
-	usernames := make([]string, 0, len(snap.Users))
-	for _, u := range snap.Users {
+// policyOutputFor decodes a specific policy text for the editor. Saves call it
+// with their confirmed write so the browser never receives a stale snapshot.
+func policyOutputFor(hujson string, users []types.User) (*policyOutput, error) {
+	out := &policyOutput{}
+	body, err := policyBodyFor(hujson, users)
+	if err != nil {
+		return nil, err
+	}
+
+	out.Body = body
+
+	return out, nil
+}
+
+func policyBodyFor(hujson string, users []types.User) (PolicyBody, error) {
+	out := PolicyBody{}
+	out.HuJSON = hujson
+	out.SHA256 = acl.SHA256(hujson)
+	out.Editable = true
+
+	usernames := make([]string, 0, len(users))
+	for _, u := range users {
 		usernames = append(usernames, u.Name)
 	}
 
-	doc, err := acl.Parse(snap.Policy.HuJSON)
+	doc, err := acl.Parse(hujson)
 	if err != nil {
 		if errors.Is(err, acl.ErrEmpty) {
 			// A fresh Headscale has no policy. The form should open
 			// on an empty document rather than an error.
 			empty := &acl.Schema{}
-			out.Body.Schema = empty
-			out.Body.Tokens = empty.TokensFor(usernames)
+			out.Schema = empty
+			out.Tokens = empty.TokensFor(usernames)
 
 			return out, nil
 		}
 
 		// Return the text anyway: the editor is where this gets fixed.
-		out.Body.ParseError = err.Error()
+		out.ParseError = err.Error()
 
 		return out, nil
 	}
 
 	schema, err := doc.Schema()
 	if err != nil {
-		out.Body.ParseError = err.Error()
+		out.ParseError = err.Error()
 
 		return out, nil
 	}
 
-	out.Body.Schema = schema
-	out.Body.Tokens = schema.TokensFor(usernames)
+	out.Schema = schema
+	out.Tokens = schema.TokensFor(usernames)
 
 	return out, nil
 }

@@ -36,6 +36,10 @@ type Deps struct {
 	// HeadscaleURL is how this process reaches Headscale.
 	HeadscaleURL string
 
+	// HeadscaleAPIKeyPrefix identifies the API key Headboard uses. It is public
+	// metadata only; the configured credential never leaves the process.
+	HeadscaleAPIKeyPrefix string
+
 	// HeadscalePublicURL is how *devices* reach it, which is not always the
 	// same address. It is what goes into the generated tailscale up command;
 	// never the API key.

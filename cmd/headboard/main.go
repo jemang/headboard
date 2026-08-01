@@ -179,18 +179,19 @@ func run() error {
 	go st.Sessions().Cleanup(ctx, time.Hour)
 
 	api.Mount(router, api.Deps{
-		Version:            version,
-		HeadscaleVersion:   headscaleVersion,
-		Headscale:          headscale,
-		HeadscaleURL:       cfg.HeadscaleURL,
-		HeadscalePublicURL: cfg.HeadscalePublicURL,
-		Mutator:            headscale,
-		Probe:              probe,
-		Store:              st,
-		Tailnet:            watcher,
-		OIDCEnabled:        authn.OIDCEnabled(),
-		OIDCIssuer:         cfg.OIDCIssuer,
-		Log:                log,
+		Version:               version,
+		HeadscaleVersion:      headscaleVersion,
+		Headscale:             headscale,
+		HeadscaleURL:          cfg.HeadscaleURL,
+		HeadscaleAPIKeyPrefix: hs.APIKeyPrefix(cfg.HeadscaleAPIKey),
+		HeadscalePublicURL:    cfg.HeadscalePublicURL,
+		Mutator:               headscale,
+		Probe:                 probe,
+		Store:                 st,
+		Tailnet:               watcher,
+		OIDCEnabled:           authn.OIDCEnabled(),
+		OIDCIssuer:            cfg.OIDCIssuer,
+		Log:                   log,
 	})
 
 	// The SPA is mounted last so it only sees paths the API did not claim.

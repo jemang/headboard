@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, Check, Copy, X } from 'lucide-react'
 import { cn } from '../lib/cn'
+import { copyText } from '../lib/clipboard'
 
 /**
  * Status is a dot *plus* a label. Colour never carries meaning on its own.
@@ -92,7 +93,7 @@ export function Mono({
       type="button"
       title={copied ? 'Copied' : label ? `Copy ${label}` : `Copy ${value}`}
       onClick={() => {
-        void navigator.clipboard.writeText(value).then(() => setCopied(true))
+        void copyText(value).then(setCopied)
       }}
       className={cn(
         'group inline-flex items-center gap-1 rounded px-1 font-mono text-xs transition-colors hover:bg-surface-2',
