@@ -366,4 +366,5 @@ export const api = {
     }),
   rejectRegistration: (authId: string) =>
     send<{ approved: boolean }>('POST', '/api/registrations/reject', { authId }),
+  registrationInfo: () => request<{ headscalePublicUrl: string }>('/api/registrations/info'),
 }

@@ -1,0 +1,26 @@
+import { shellArg } from './serverRegistrationCommand'
+
+export type OperatorCommandKind =
+  | 'advertise-subnet'
+  | 'accept-routes'
+  | 'advertise-exit'
+  | 'use-exit'
+  | 'enable-ssh'
+  | 'status'
+  | 'netcheck'
+  | 'ping'
+
+export function operatorCommand(kind: OperatorCommandKind, value = '') {
+  const arg = value.trim()
+
+  if ((kind === 'advertise-subnet' || kind === 'use-exit' || kind === 'ping') && !arg) return ''
+  if (kind === 'advertise-subnet') return `sudo tailscale set --advertise-routes ${shellArg(arg)}`
+  if (kind === 'accept-routes') return 'sudo tailscale set --accept-routes'
+  if (kind === 'advertise-exit') return 'sudo tailscale set --advertise-exit-node'
+  if (kind === 'use-exit') return `sudo tailscale set --exit-node ${shellArg(arg)}`
+  if (kind === 'enable-ssh') return 'sudo tailscale set --ssh'
+  if (kind === 'status') return 'tailscale status'
+  if (kind === 'netcheck') return 'tailscale netcheck'
+
+  return `tailscale ping ${shellArg(arg)}`
+}

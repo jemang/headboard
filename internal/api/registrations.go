@@ -136,7 +136,7 @@ func init() {
 }
 
 func registrationInfo(ctx context.Context, deps Deps) (registrationInfoBody, error) {
-	if _, err := require(ctx, auth.CapManageDevices); err != nil {
+	if _, err := require(ctx, auth.CapViewSelf); err != nil {
 		return registrationInfoBody{}, err
 	}
 

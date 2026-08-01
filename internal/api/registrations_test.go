@@ -20,7 +20,16 @@ func TestRegistrationInfoRequiresDeviceManagement(t *testing.T) {
 	}
 
 	member := auth.Principal{User: store.User{Role: store.RoleMember, Admission: store.AdmissionActive}}
-	if _, err := registrationInfo(auth.WithPrincipal(t.Context(), member), deps); err == nil {
-		t.Error("member received registration info")
+	info, err = registrationInfo(auth.WithPrincipal(t.Context(), member), deps)
+	if err != nil {
+		t.Fatalf("member registration info: %v", err)
+	}
+	if info.HeadscalePublicURL != "https://hs.example" {
+		t.Errorf("member public URL = %q, want %q", info.HeadscalePublicURL, "https://hs.example")
+	}
+
+	pending := auth.Principal{User: store.User{Role: store.RoleMember, Admission: store.AdmissionPending}}
+	if _, err := registrationInfo(auth.WithPrincipal(t.Context(), pending), deps); err == nil {
+		t.Error("pending account received registration info")
 	}
 }

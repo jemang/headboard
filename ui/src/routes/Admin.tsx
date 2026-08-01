@@ -8,6 +8,7 @@ import { useToast } from '../components/Toast'
 import { KeyRound, ShieldCheck, UserPlus, Users } from 'lucide-react'
 import { expiryFromDays, isExpired } from '../lib/apiKeyControls'
 import { preAuthHardening } from '../lib/preAuthHardening'
+import { serverRegistrationCommand, type ServerRegistrationKind } from '../lib/serverRegistrationCommand'
 
 const roles: Role[] = ['owner', 'admin', 'network-admin', 'auditor', 'member']
 
@@ -244,11 +245,7 @@ export function Keys({ me }: { me: Me }) {
         <ErrorNote error={keys.error ?? headscaleKeys.error} />
       )}
 
-      <Section title="Enrol a device" actions={<span className="text-xs text-muted-foreground">manual approval required</span>}>
-        <p className="text-sm text-muted-foreground">
-          Start registration without a pre-auth key, then provide the <code>hskey-authreq-…</code> request ID to an owner, admin, or network admin for approval.
-        </p>
-      </Section>
+      <EnrolDevice />
 
       {deviceManager && <ApproveRegistration users={users.data?.users ?? []} />}
 
@@ -263,7 +260,7 @@ export function Keys({ me }: { me: Me }) {
         </Section>
       )}
 
-      <Section title="Pre-auth keys">
+      {admin && <Section title="Pre-auth keys">
         <Table columns={['User', 'Flags', 'Tags', 'Expires']}>
           {keys.isPending ? (
             <SpanRow columns={4}>
@@ -304,7 +301,7 @@ export function Keys({ me }: { me: Me }) {
             </SpanRow>
           )}
         </Table>
-      </Section>
+      </Section>}
 
       {admin && (
         <Section title="Headscale API keys">
@@ -444,11 +441,36 @@ export function Keys({ me }: { me: Me }) {
  * person enrolling passes it on. Headscale main's /api/v2 is expected to expose
  * the queue, at which point this becomes a list.
  */
+function EnrolDevice() {
+  const registrationInfo = useQuery({ queryKey: ['registration-info'], queryFn: api.registrationInfo })
+  const command = registrationInfo.data?.headscalePublicUrl
+    ? serverRegistrationCommand(registrationInfo.data.headscalePublicUrl, 'standard', '')
+    : ''
+
+  return (
+    <Section title="Enrol a device" actions={<span className="text-xs text-muted-foreground">manual approval required</span>}>
+      <p className="text-sm text-muted-foreground">
+        Run this on your server. It creates a pending request only; send its <code>hskey-authreq-…</code> ID to an owner, admin, or network admin for approval.
+      </p>
+      {registrationInfo.error && <ErrorNote error={registrationInfo.error} />}
+      {command ? (
+        <div className="flex items-center gap-2 rounded-md bg-surface-2 px-2 py-1.5">
+          <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs">{command}</code>
+          <Mono compact label="device enrolment command" value={command} className="shrink-0 border border-border px-2 py-1.5" />
+        </div>
+      ) : !registrationInfo.error && <p className="text-xs text-muted-foreground">Loading the Headscale address…</p>}
+    </Section>
+  )
+}
+
 function ApproveRegistration({ users }: { users: TailnetUser[] }) {
   const qc = useQueryClient()
   const [authId, setAuthId] = useState('')
   const [user, setUser] = useState('')
   const [approved, setApproved] = useState<Device | null>(null)
+  const [serverKind, setServerKind] = useState<ServerRegistrationKind>('tagged')
+  const [serverValue, setServerValue] = useState('')
+  const registrationInfo = useQuery({ queryKey: ['registration-info'], queryFn: api.registrationInfo })
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['devices'] })
@@ -472,15 +494,62 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
   })
 
   const ready = authId.trim().length > 13
+  const needsServerValue = serverKind === 'tagged' || serverKind === 'subnet'
+  const command = registrationInfo.data?.headscalePublicUrl && (!needsServerValue || serverValue.trim())
+    ? serverRegistrationCommand(registrationInfo.data.headscalePublicUrl, serverKind, serverValue.trim())
+    : ''
 
   return (
-    <Section title="Approve a device">
+    <Section title="Advanced registration and approval">
       <p className="text-sm text-muted-foreground">
-        When someone runs <code>tailscale up</code> without a pre-auth key, the device prints a URL
-        containing an id like <code>hskey-authreq-…</code>. Paste it here to let the device in.
+        Generate a tagged-server, subnet-router, or exit-node command. Running it creates a pending
+        request; it cannot join until you paste its <code>hskey-authreq-…</code> ID below and approve it.
       </p>
 
-      {(approve.error || reject.error) && <ErrorNote error={approve.error ?? reject.error} />}
+      {(approve.error || reject.error || registrationInfo.error) && <ErrorNote error={approve.error ?? reject.error ?? registrationInfo.error} />}
+
+      <div className="space-y-3 rounded-lg border border-border bg-surface-0 p-3">
+        <div className="flex flex-wrap items-end gap-2">
+          <label>
+            <span className="text-xs text-muted-foreground">Server type</span>
+            <select
+              value={serverKind}
+              onChange={(e) => {
+                setServerKind(e.target.value as ServerRegistrationKind)
+                setServerValue('')
+              }}
+              className="mt-1 block rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
+            >
+              <option value="tagged">Tagged server</option>
+              <option value="subnet">Subnet router</option>
+              <option value="exit">Exit node</option>
+            </select>
+          </label>
+          {serverKind === 'tagged' && (
+            <label className="min-w-64 flex-1">
+              <span className="text-xs text-muted-foreground">Tags</span>
+              <Input value={serverValue} onChange={setServerValue} placeholder="tag:server,tag:prod" className="mt-1" />
+            </label>
+          )}
+          {serverKind === 'subnet' && (
+            <label className="min-w-64 flex-1">
+              <span className="text-xs text-muted-foreground">Subnet routes</span>
+              <Input value={serverValue} onChange={setServerValue} placeholder="10.0.0.0/24,192.168.1.0/24" className="mt-1" />
+            </label>
+          )}
+        </div>
+
+        {command ? (
+          <div className="flex items-center gap-2 rounded-md bg-surface-2 px-2 py-1.5">
+            <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs">{command}</code>
+            <Mono compact label="server registration command" value={command} className="shrink-0 border border-border px-2 py-1.5" />
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {needsServerValue ? 'Enter the tags or routes to generate the command.' : 'Loading the Headscale address…'}
+          </p>
+        )}
+      </div>
 
       {approved && (
         <div className="rounded-md border border-ok/40 bg-ok/10 px-3 py-2 text-sm">

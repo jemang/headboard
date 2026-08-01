@@ -8,11 +8,13 @@ import { useTheme, type Theme } from './lib/theme'
 import { Palette } from './components/Palette'
 import { Button, ErrorNote } from './components/ui'
 import { ToastHost } from './components/Toast'
-import { KeyRound, Laptop, LogOut, Menu, Moon, ShieldCheck, Sun, Users, X } from 'lucide-react'
+import { CircleHelp, KeyRound, Laptop, LogOut, Menu, Moon, ShieldCheck, Sun, Users, X } from 'lucide-react'
 import { Devices } from './routes/Devices'
 import { Acl } from './routes/Acl'
 import { Keys, People } from './routes/Admin'
 import { Account } from './routes/Account'
+import { Help } from './routes/Help'
+import { BrandMark } from './components/BrandMark'
 
 export function App() {
   return (
@@ -57,7 +59,7 @@ function Shell() {
 
   if (!admission.canUseApp) return <AdmissionScreen email={user.user.email} title={admission.title} detail={admission.detail} />
 
-  const known = ['/', '/devices', '/acl', '/people', '/keys', '/account']
+  const known = ['/', '/devices', '/acl', '/people', '/keys', '/help', '/account']
 
   return (
     <div className="min-h-dvh">
@@ -87,6 +89,11 @@ function Shell() {
           {path === '/acl' && <Acl />}
           {path === '/people' && <People me={user} />}
           {path === '/keys' && <Keys me={user} />}
+          {path === '/help' && (
+            user.capabilities.includes('manage:devices')
+              ? <Help />
+              : <p className="text-sm text-muted-foreground">You do not have access to the operator guide.</p>
+          )}
           {path === '/account' && <Account me={user} />}
           {(path === '/' || path === '/devices') && (
             <Devices me={user} focus={focusDevice} onFocused={() => setFocusDevice(null)} />
@@ -174,6 +181,7 @@ function Nav({
     { to: '/acl', label: 'Access control', icon: ShieldCheck, show: can('manage:policy') },
     { to: '/people', label: 'People', icon: Users, show: can('manage:users') },
     { to: '/keys', label: 'Keys', icon: KeyRound, show: true },
+    { to: '/help', label: 'Help', icon: CircleHelp, show: can('manage:devices') },
   ].filter((l) => l.show)
 
   const active = path === '/' ? '/devices' : path
@@ -205,7 +213,7 @@ function Nav({
     <>
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-border bg-surface-1/95 px-3 py-5 backdrop-blur lg:flex">
         <Link to="/devices" className="mb-8 flex items-center gap-3 px-3">
-          <span className="grid size-8 place-items-center rounded-lg bg-accent-500 text-sm font-bold text-slate-950 shadow-sm">H</span>
+          <span className="grid size-8 place-items-center rounded-lg bg-accent-500 text-slate-950 shadow-sm"><BrandMark className="size-5" /></span>
           <span>
             <span className="block text-base font-semibold tracking-tight">Headboard</span>
             <span className="block text-[0.6875rem] text-muted-foreground">Headscale control plane</span>
@@ -237,7 +245,7 @@ function Nav({
 
       <header className="sticky top-0 z-30 flex items-center border-b border-border bg-surface-1/95 px-4 py-3 backdrop-blur lg:hidden">
         <Link to="/devices" className="flex items-center gap-2 font-semibold tracking-tight">
-          <span className="grid size-7 place-items-center rounded-md bg-accent-500 text-xs font-bold text-slate-950">H</span>
+          <span className="grid size-7 place-items-center rounded-md bg-accent-500 text-slate-950"><BrandMark className="size-4" /></span>
           Headboard
         </Link>
         <button
@@ -311,7 +319,7 @@ function Login({ error }: { error: unknown }) {
       <div className="grid w-full max-w-4xl overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-raised md:grid-cols-[1.05fr_.95fr]">
         <div className="hidden flex-col justify-between bg-slate-950 p-8 text-slate-100 md:flex">
           <div>
-            <span className="grid size-10 place-items-center rounded-xl bg-accent-500 text-base font-bold text-slate-950">H</span>
+            <span className="grid size-10 place-items-center rounded-xl bg-accent-500 text-slate-950"><BrandMark className="size-6" /></span>
             <p className="mt-12 text-eyebrow font-semibold uppercase tracking-[0.14em] text-accent-400">Headscale control plane</p>
             <h1 className="mt-3 max-w-sm text-3xl font-semibold tracking-tight">Your tailnet, made legible.</h1>
             <p className="mt-4 max-w-sm text-sm leading-6 text-slate-300">Manage devices, policy, people, and keys with the same rules Headscale enforces.</p>
@@ -321,9 +329,7 @@ function Login({ error }: { error: unknown }) {
 
         <div className="space-y-5 p-6 sm:p-8">
           <div className="flex items-center gap-2.5 md:hidden">
-            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent-500 text-slate-950">
-              <ShieldCheck aria-hidden className="size-5" strokeWidth={1.5} />
-            </span>
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent-500 text-slate-950"><BrandMark className="size-5" /></span>
             <div>
               <h1 className="text-display font-semibold leading-none">Headboard</h1>
               <p className="mt-1 text-sm text-muted-foreground">A control plane for Headscale.</p>
