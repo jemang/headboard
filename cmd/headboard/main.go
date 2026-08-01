@@ -21,8 +21,8 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/jemang/headboard/internal/api"
-	"github.com/jemang/headboard/internal/config"
 	"github.com/jemang/headboard/internal/auth"
+	"github.com/jemang/headboard/internal/config"
 	"github.com/jemang/headboard/internal/hs"
 	"github.com/jemang/headboard/internal/store"
 	"github.com/jemang/headboard/internal/tailnet"
@@ -179,17 +179,18 @@ func run() error {
 	go st.Sessions().Cleanup(ctx, time.Hour)
 
 	api.Mount(router, api.Deps{
-		Version:          version,
-		HeadscaleVersion: headscaleVersion,
-		Headscale:        headscale,
-		HeadscaleURL:     cfg.HeadscaleURL,
-		Mutator:          headscale,
-		Probe:            probe,
-		Store:            st,
-		Tailnet:          watcher,
-		OIDCEnabled:      authn.OIDCEnabled(),
-		OIDCIssuer:       cfg.OIDCIssuer,
-		Log:              log,
+		Version:            version,
+		HeadscaleVersion:   headscaleVersion,
+		Headscale:          headscale,
+		HeadscaleURL:       cfg.HeadscaleURL,
+		HeadscalePublicURL: cfg.HeadscalePublicURL,
+		Mutator:            headscale,
+		Probe:              probe,
+		Store:              st,
+		Tailnet:            watcher,
+		OIDCEnabled:        authn.OIDCEnabled(),
+		OIDCIssuer:         cfg.OIDCIssuer,
+		Log:                log,
 	})
 
 	// The SPA is mounted last so it only sees paths the API did not claim.

@@ -7,11 +7,6 @@ people can see their own devices and the rules that actually apply to them.
 Runs as a single container against your existing Headscale. No database server, and no identity
 provider unless you want one.
 
-## Why not Headplane
-
-[Headplane](https://github.com/tale/headplane) covers admin basics, but its ACL editor is a raw
-HuJSON textarea (disabled entirely outside `policy.mode = database`), one OIDC identity gets full
-admin, and a normal user cannot log in at all. Headboard targets exactly those gaps.
 
 ## The idea
 
@@ -78,6 +73,7 @@ Everything is environment variables. The ones without a default must be set.
 | --- | --- | --- |
 | `HEADSCALE_URL` | — | Base URL of your Headscale, no trailing slash |
 | `HEADSCALE_API_KEY` | — | Admin key. Stays in the server process; the browser never sees it |
+| `HEADSCALE_PUBLIC_URL` | `HEADSCALE_URL` | The address *devices* reach Headscale at, when it differs from the one Headboard uses. Goes into the generated `tailscale up` command |
 | `DATABASE_URL` | `headboard.db` | SQLite file for Headboard's own store. The image points it at `/data/headboard.db` |
 | `HEADBOARD_ADMIN_EMAIL` | `admin@headboard.local` | The owner created on first run |
 | `HEADBOARD_ADMIN_RESET` | `false` | Mint and print a new owner password at startup |

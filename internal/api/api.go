@@ -33,9 +33,13 @@ type Deps struct {
 	// Headscale is the read client for the server this process drives.
 	Headscale hs.Client
 
-	// HeadscaleURL is the login server devices enrol against. Shown in the
-	// generated tailscale up command; never the API key.
+	// HeadscaleURL is how this process reaches Headscale.
 	HeadscaleURL string
+
+	// HeadscalePublicURL is how *devices* reach it, which is not always the
+	// same address. It is what goes into the generated tailscale up command;
+	// never the API key.
+	HeadscalePublicURL string
 
 	// Mutator is the write client. Separate from Headscale so a handler
 	// that only reads cannot accidentally write.

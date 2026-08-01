@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
 )
 
 // AuditEntry is one recorded mutation. Headscale keeps no history of its own,

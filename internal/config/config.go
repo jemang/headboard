@@ -24,6 +24,16 @@ type Config struct {
 	// trailing slash (e.g. https://headscale.example.com).
 	HeadscaleURL string
 
+	// HeadscalePublicURL is the address *devices* use to reach Headscale, as
+	// opposed to the address Headboard uses. They differ whenever Headboard
+	// talks to Headscale over an internal name — a Docker network, a
+	// Kubernetes service, localhost — and the enrolment command Headboard
+	// prints has to carry the one a laptop can actually resolve.
+	//
+	// Empty means "same as HeadscaleURL", which is correct for a single-address
+	// deployment and wrong in a way the Keys screen points out.
+	HeadscalePublicURL string
+
 	// HeadscaleAPIKey is an admin API key minted with
 	// `headscale apikeys create`. It never leaves this process.
 	HeadscaleAPIKey string
@@ -117,6 +127,13 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("HEADBOARD_SESSION_LIFETIME: %w", err)
 	}
 	c.SessionLifetime = life
+
+	// Devices reach Headscale at the same address Headboard does unless told
+	// otherwise, which is the common single-address case.
+	c.HeadscalePublicURL = strings.TrimRight(os.Getenv("HEADSCALE_PUBLIC_URL"), "/")
+	if c.HeadscalePublicURL == "" {
+		c.HeadscalePublicURL = c.HeadscaleURL
+	}
 
 	return c, c.validate()
 }

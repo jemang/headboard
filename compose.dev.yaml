@@ -53,6 +53,9 @@ services:
       - '3000:3000'
     environment:
       HEADSCALE_URL: http://headscale-dev:8080
+      # Devices cannot resolve the compose service name; this is the address a
+      # tailscale client on the host actually reaches.
+      HEADSCALE_PUBLIC_URL: http://${HOST_IP:-127.0.0.1}:8080
       HEADSCALE_API_KEY: ${HEADSCALE_API_KEY:-}
       DATABASE_URL: /data/headboard.db
       HEADBOARD_PUBLIC_URL: http://${HOST_IP:-127.0.0.1}:3000

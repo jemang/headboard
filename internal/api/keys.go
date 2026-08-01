@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -53,6 +54,16 @@ type createPreAuthKeyOutput struct {
 
 		// Command is ready to paste on the device being enrolled.
 		Command string `json:"command"`
+
+		// LoginServer is the address inside that command, reported on its
+		// own so the UI can show which host a device is being pointed at.
+		LoginServer string `json:"loginServer"`
+
+		// LoginServerProblem is set when that address looks like one only
+		// Headboard can reach. Advisory — Headboard cannot know what a
+		// device can resolve — but the alternative is a command that copies
+		// cleanly and fails on someone else's machine.
+		LoginServerProblem string `json:"loginServerProblem,omitempty"`
 
 		// Warning states plainly that the secret is not recoverable.
 		Warning string `json:"warning"`
@@ -208,7 +219,12 @@ func init() {
 			out := &createPreAuthKeyOutput{}
 			out.Body.Key = key
 			out.Body.Command = enrolCommand(deps, key.Key)
+			out.Body.LoginServer = loginServer(deps)
 			out.Body.Warning = "This key is shown once. Headscale stores only a hash, so it cannot be retrieved again."
+
+			if problem := unreachableLoginServer(out.Body.LoginServer); problem != "" {
+				out.Body.LoginServerProblem = problem
+			}
 
 			return out, nil
 		})
@@ -406,13 +422,52 @@ func parseExpiry(in string) (time.Time, error) {
 }
 
 // enrolCommand is what gets pasted on the device being added.
+//
+// It uses the public address rather than the one Headboard dials: those differ
+// whenever Headscale is reached over an internal name, and a command naming
+// `headscale:8080` is one a device cannot act on.
 func enrolCommand(deps Deps, key string) string {
 	if key == "" {
 		return ""
 	}
 
 	return fmt.Sprintf("tailscale up --login-server %s --authkey %s",
-		deps.HeadscaleURL, key)
+		loginServer(deps), key)
+}
+
+// loginServer is the address devices enrol against.
+func loginServer(deps Deps) string {
+	if deps.HeadscalePublicURL != "" {
+		return deps.HeadscalePublicURL
+	}
+
+	return deps.HeadscaleURL
+}
+
+// unreachableLoginServer reports whether the login server looks like an address
+// only this process can resolve, and says why.
+//
+// A guess, deliberately: Headboard cannot know what a device can reach. It is
+// worth guessing because the failure is otherwise silent — the command copies
+// cleanly, and only fails on someone else's machine.
+func unreachableLoginServer(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+
+	host := u.Hostname()
+
+	switch {
+	case host == "localhost" || host == "127.0.0.1" || host == "::1":
+		return "points at this server's own loopback address"
+	case !strings.Contains(host, "."):
+		// A bare label resolves inside a container network and nowhere
+		// else — this is exactly the docker-compose service-name case.
+		return "is a bare hostname, which only resolves on Headboard's own network"
+	default:
+		return ""
+	}
 }
 
 // Headscale API keys are "hskey-api-" followed by a 12-character public prefix
