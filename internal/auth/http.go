@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/juanfont/headscale/hscontrol/types"
 )
@@ -66,7 +67,7 @@ func (a *Auth) Routes(mux *http.ServeMux, users UserLister, log *slog.Logger) {
 		}
 
 		if _, ok := a.CurrentUser(r.Context()); ok {
-			http.Redirect(w, r, "/", http.StatusSeeOther)
+			http.Redirect(w, r, a.cfg.BasePath+"/", http.StatusSeeOther)
 
 			return
 		}
@@ -104,7 +105,7 @@ func (a *Auth) Routes(mux *http.ServeMux, users UserLister, log *slog.Logger) {
 		user, returnTo, err := a.Callback(r.Context(), r, list, log)
 		if err != nil {
 			log.Warn("login failed", "err", err)
-			http.Redirect(w, r, "/login?error=1", http.StatusSeeOther)
+			http.Redirect(w, r, a.cfg.BasePath+"/login?error=1", http.StatusSeeOther)
 
 			return
 		}
@@ -112,7 +113,7 @@ func (a *Auth) Routes(mux *http.ServeMux, users UserLister, log *slog.Logger) {
 		log.Info("login", "user", user.Email, "role", user.Role,
 			"linked", user.Linked(), "method", "oidc")
 
-		http.Redirect(w, r, returnTo, http.StatusSeeOther)
+		http.Redirect(w, r, a.appPath(returnTo), http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("POST /auth/logout", func(w http.ResponseWriter, r *http.Request) {
@@ -120,7 +121,7 @@ func (a *Auth) Routes(mux *http.ServeMux, users UserLister, log *slog.Logger) {
 			log.Error("logout", "err", err)
 		}
 
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		http.Redirect(w, r, a.cfg.BasePath+"/login", http.StatusSeeOther)
 	})
 }
 
@@ -139,6 +140,21 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"detail": message})
+}
+
+// appPath prefixes a redirect target with the deployment's base path.
+//
+// return_to comes off the query string, so it may already carry the prefix —
+// a person who copies /manage/acl out of the address bar into a login link.
+// Prefixing blindly would send them to /manage/manage/acl, which the SPA
+// renders as an empty page rather than an error.
+func (a *Auth) appPath(p string) string {
+	base := a.cfg.BasePath
+	if base == "" || p == base || strings.HasPrefix(p, base+"/") {
+		return p
+	}
+
+	return base + p
 }
 
 // Middleware attaches the caller to the request context when a session exists.

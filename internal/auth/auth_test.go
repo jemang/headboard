@@ -170,3 +170,22 @@ func TestRoleRank(t *testing.T) {
 		}
 	}
 }
+
+// Redirect targets are app paths, but return_to arrives from the query string
+// and may already carry the deployment prefix. Adding it twice sends a person
+// to /manage/manage/acl, which the SPA renders as a blank page.
+func TestAppPathDoesNotDoubleThePrefix(t *testing.T) {
+	for _, tc := range []struct{ base, in, want string }{
+		{"", "/acl", "/acl"},
+		{"/manage", "/acl", "/manage/acl"},
+		{"/manage", "/", "/manage/"},
+		{"/manage", "/manage/acl", "/manage/acl"},
+		{"/manage", "/manage", "/manage"},
+		{"/manage", "/management/acl", "/manage/management/acl"},
+	} {
+		a := &Auth{cfg: Config{BasePath: tc.base}}
+		if got := a.appPath(tc.in); got != tc.want {
+			t.Errorf("appPath(base=%q, %q) = %q, want %q", tc.base, tc.in, got, tc.want)
+		}
+	}
+}

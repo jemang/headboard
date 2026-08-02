@@ -5,6 +5,8 @@
  * in the Go process — so this is the single network surface the UI has.
  */
 
+import { withBase } from './basePath'
+
 export class ApiError extends Error {
   readonly status: number
 
@@ -16,7 +18,9 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  // Every call goes through here, so prefixing once is what lets the rest of
+  // the client keep writing "/api/devices" while the app is served at /manage.
+  const res = await fetch(withBase(path), {
     credentials: 'same-origin',
     headers: { Accept: 'application/json', ...init?.headers },
     ...init,

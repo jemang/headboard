@@ -2,7 +2,14 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!--
+      Rewritten by the Go server to the path Headboard is served under, so the
+      build's relative URLs resolve the same from /manage as from
+      /manage/devices/12. Left as "/" for a site root; internal/web fails to
+      start if this tag goes missing.
+    -->
+    <base href="/" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
     <title>Headboard</title>

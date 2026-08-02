@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { stripBase, withBase } from './basePath'
 
 /**
  * A ~50-line router, deliberately.
@@ -17,19 +18,23 @@ interface RouterValue {
 const RouterContext = createContext<RouterValue>({ path: '/', navigate: () => {} })
 
 export function Router({ children }: { children: ReactNode }) {
-  const [path, setPath] = useState(() => window.location.pathname)
+  // Routes are written without the deployment's base path, so a route table
+  // does not change when the app moves from / to /manage. The base is added
+  // back on the way into history and stripped on the way out.
+  const [path, setPath] = useState(() => stripBase(window.location.pathname))
 
   useEffect(() => {
-    const onPop = () => setPath(window.location.pathname)
+    const onPop = () => setPath(stripBase(window.location.pathname))
     window.addEventListener('popstate', onPop)
 
     return () => window.removeEventListener('popstate', onPop)
   }, [])
 
   const navigate = useCallback((to: string, opts?: { replace?: boolean }) => {
-    if (to === window.location.pathname) return
+    const target = withBase(to)
+    if (target === window.location.pathname) return
 
-    window.history[opts?.replace ? 'replaceState' : 'pushState']({}, '', to)
+    window.history[opts?.replace ? 'replaceState' : 'pushState']({}, '', target)
     setPath(to)
   }, [])
 
@@ -55,7 +60,7 @@ export function Link({
 
   return (
     <a
-      href={to}
+      href={withBase(to)}
       className={className}
       onClick={(e) => {
         // Let modified clicks open a new tab, as any link should.

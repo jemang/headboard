@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { withBase } from './lib/basePath'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, type Health, type Me } from './lib/api'
 import { connectionPresentation } from './lib/headscaleConnection'
@@ -113,7 +114,7 @@ function AdmissionScreen({ email, title, detail }: { email: string; title: strin
         <h1 className="mt-2 text-display font-semibold">{title}</h1>
         <p className="mt-3 text-sm text-muted-foreground">{detail}</p>
         <p className="mt-5 text-xs text-muted-foreground">Signed in as {email}</p>
-        <form method="post" action="/auth/logout" className="mt-5"><Button type="submit" variant="ghost" icon={LogOut}>Sign out</Button></form>
+        <form method="post" action={withBase('/auth/logout')} className="mt-5"><Button type="submit" variant="ghost" icon={LogOut}>Sign out</Button></form>
       </section>
     </main>
   )
@@ -149,7 +150,7 @@ function useLiveUpdates(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return
 
-    const source = new EventSource('/api/events')
+    const source = new EventSource(withBase('/api/events'))
 
     source.addEventListener('tailnet', () => {
       void qc.invalidateQueries({ queryKey: ['devices'] })
@@ -234,7 +235,7 @@ function Nav({
             >
               {theme === 'dark' ? <Sun aria-hidden className="size-4" strokeWidth={1.5} /> : <Moon aria-hidden className="size-4" strokeWidth={1.5} />}
             </button>
-            <form method="post" action="/auth/logout">
+            <form method="post" action={withBase('/auth/logout')}>
               <Button type="submit" variant="ghost" icon={LogOut} title="Sign out" className="px-2">
                 <span className="sr-only">Sign out</span>
               </Button>
@@ -270,7 +271,7 @@ function Nav({
               <Button variant="default" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} icon={theme === 'dark' ? Sun : Moon}>
                 {theme === 'dark' ? 'Light theme' : 'Dark theme'}
               </Button>
-              <form method="post" action="/auth/logout"><Button type="submit" variant="ghost" icon={LogOut}>Sign out</Button></form>
+              <form method="post" action={withBase('/auth/logout')}><Button type="submit" variant="ghost" icon={LogOut}>Sign out</Button></form>
             </div>
           </div>
         </div>
@@ -390,7 +391,7 @@ function Login({ error }: { error: unknown }) {
             </div>
 
             <a
-              href={status.data.loginUrl ?? '/auth/oidc'}
+              href={status.data.loginUrl ?? withBase('/auth/oidc')}
               className="block rounded-lg border border-border px-3 py-2.5 text-center text-sm font-medium transition-colors hover:border-accent-500/40 hover:bg-surface-2"
             >
               Sign in with your identity provider

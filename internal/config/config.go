@@ -95,6 +95,26 @@ func (c Config) RedirectURL() string {
 	return c.PublicURL + "/auth/callback"
 }
 
+// BasePath is the path Headboard is served under, without a trailing slash.
+// Empty means the site root.
+//
+// It is derived from PublicURL rather than configured separately, because the
+// two cannot legally disagree: the OIDC redirect is PublicURL + /auth/callback,
+// so a deployment reached at https://host/manage has already had to say so
+// there. A second variable would only add a way to get it wrong.
+//
+//	HEADBOARD_PUBLIC_URL=https://guard.example.com/manage
+//	  → served under /manage, cookie scoped to /manage,
+//	    redirect https://guard.example.com/manage/auth/callback
+func (c Config) BasePath() string {
+	u, err := url.Parse(c.PublicURL)
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimRight(u.Path, "/")
+}
+
 // SecureCookies reports whether the session cookie may be marked Secure, which
 // depends on Headboard being reached over HTTPS.
 func (c Config) SecureCookies() bool {

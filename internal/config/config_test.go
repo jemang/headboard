@@ -37,3 +37,22 @@ func TestDevUIProxyAllowsExplicitEmptyOverride(t *testing.T) {
 		t.Fatalf("devUIProxy() = %q, want embedded UI", got)
 	}
 }
+
+// A deployment behind a proxy at /manage has to say so in HEADBOARD_PUBLIC_URL
+// anyway, because the OIDC redirect is derived from it. BasePath reads it back
+// out rather than adding a second variable that could disagree.
+func TestBasePathComesFromThePublicURL(t *testing.T) {
+	for _, tc := range []struct{ publicURL, want string }{
+		{"https://guard.example.com", ""},
+		{"https://guard.example.com/", ""},
+		{"https://guard.example.com/manage", "/manage"},
+		{"https://guard.example.com/manage/", "/manage"},
+		{"http://127.0.0.1:3000/a/b/", "/a/b"},
+		{"://nonsense", ""},
+	} {
+		c := Config{PublicURL: tc.publicURL}
+		if got := c.BasePath(); got != tc.want {
+			t.Errorf("BasePath(%q) = %q, want %q", tc.publicURL, got, tc.want)
+		}
+	}
+}

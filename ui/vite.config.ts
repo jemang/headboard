@@ -3,6 +3,10 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
+  // Relative asset URLs, resolved by the <base href> the Go server writes into
+  // index.html. An absolute base would have to be known at build time, which
+  // would mean a separate image per deployment path.
+  base: './',
   plugins: [react(), tailwindcss()],
   server: {
     // The Go server is the single origin in production, so the dev server

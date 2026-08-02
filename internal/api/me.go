@@ -83,7 +83,7 @@ func init() {
 
 			if body.OIDCEnabled {
 				body.Issuer = deps.OIDCIssuer
-				body.LoginURL = "/auth/oidc"
+				body.LoginURL = deps.BasePath + "/auth/oidc"
 			}
 
 			if _, ok := auth.PrincipalFrom(ctx); ok {

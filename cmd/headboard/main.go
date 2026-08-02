@@ -45,6 +45,34 @@ var version = "0.1.0-dev"
 // server running this version.
 const headscaleVersion = "v0.29.3"
 
+// servedUnder mounts everything below a path prefix, so Headboard can share a
+// hostname with Headscale behind one proxy:
+//
+//	https://guard.example.com/          → Headscale
+//	https://guard.example.com/manage/   → Headboard
+//
+// The prefix is stripped here rather than threaded through the router, so every
+// handler below — the API, the auth routes, the SPA — keeps seeing the paths it
+// already knows. A request for the bare prefix is redirected to the trailing
+// slash, because relative asset URLs resolve against the directory otherwise.
+func servedUnder(basePath string, next http.Handler) http.Handler {
+	if basePath == "" {
+		return next
+	}
+
+	stripped := http.StripPrefix(basePath, next)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == basePath {
+			http.Redirect(w, r, basePath+"/", http.StatusMovedPermanently)
+
+			return
+		}
+
+		stripped.ServeHTTP(w, r)
+	})
+}
+
 // eventStreamPath is exempt from the request timeout.
 const eventStreamPath = "/api/events"
 
@@ -135,6 +163,7 @@ func run() error {
 	authn := auth.New(auth.Config{
 		SecureCookies:   cfg.SecureCookies(),
 		SessionLifetime: cfg.SessionLifetime,
+		BasePath:        cfg.BasePath(),
 	}, st)
 
 	if cfg.OIDCConfigured() {
@@ -191,6 +220,7 @@ func run() error {
 		Tailnet:               watcher,
 		OIDCEnabled:           authn.OIDCEnabled(),
 		OIDCIssuer:            cfg.OIDCIssuer,
+		BasePath:              cfg.BasePath(),
 		Log:                   log,
 	})
 
@@ -205,7 +235,7 @@ func run() error {
 		return err
 	}
 
-	spa, err := web.Handler(dist, devProxy, log)
+	spa, err := web.Handler(dist, devProxy, cfg.BasePath(), log)
 	if err != nil {
 		return err
 	}
@@ -214,7 +244,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           router,
+		Handler:           servedUnder(cfg.BasePath(), router),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

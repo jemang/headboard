@@ -42,6 +42,12 @@ type Config struct {
 
 	// SessionLifetime is how long a login lasts.
 	SessionLifetime time.Duration
+
+	// BasePath scopes the session cookie when Headboard is served under a
+	// path rather than at a site root. It matters most when something else
+	// shares the hostname — Headscale itself, typically — because a cookie
+	// on "/" is sent to that neighbour on every request.
+	BasePath string
 }
 
 // OIDCConfig describes the optional identity provider.
@@ -91,7 +97,7 @@ func New(cfg Config, st *store.Store) *Auth {
 	sessions.Lifetime = cfg.SessionLifetime
 	sessions.Cookie.Name = "headboard_session"
 	sessions.Cookie.HttpOnly = true
-	sessions.Cookie.Path = "/"
+	sessions.Cookie.Path = cfg.BasePath + "/"
 	sessions.Cookie.SameSite = http.SameSiteLaxMode
 	sessions.Cookie.Secure = cfg.SecureCookies
 

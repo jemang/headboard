@@ -68,6 +68,11 @@ type Deps struct {
 	// provider a person is about to be sent to.
 	OIDCIssuer string
 
+	// BasePath is the path Headboard is served under, empty at a site root.
+	// Handlers see stripped paths, so any URL handed to the *browser* has to
+	// put it back — the login URL below being the only one.
+	BasePath string
+
 	Log *slog.Logger
 }
 
