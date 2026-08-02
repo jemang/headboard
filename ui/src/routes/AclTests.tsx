@@ -13,6 +13,7 @@ import { Badge, Button, Empty, ErrorNote, Input, Section, Status } from '../comp
 import { FlaskConical, Play, Plus, Radar, Trash2 } from 'lucide-react'
 import { TokenPicker, validateTokens } from '../components/TokenPicker'
 import { schemaWithPendingChanges } from '../lib/policyDraft'
+import { simulationRequest, testDestinationIssue } from '../lib/grantEditor'
 
 /**
  * Tests and the simulator sit together because they answer the same question
@@ -241,7 +242,8 @@ function AddTest({ policy, queue }: { policy: Policy; queue: (op: PatchOp) => vo
   const [kind, setKind] = useState<'accept' | 'deny'>('accept')
 
   const issues = validateTokens(src, policy.tokens, 'src')
-  const ready = src.length === 1 && dst.trim() !== '' && issues.length === 0
+  const destinationIssue = testDestinationIssue(dst, policy.schema?.hosts)
+  const ready = src.length === 1 && dst.trim() !== '' && issues.length === 0 && !destinationIssue
 
   return (
     <div className="space-y-2 rounded-lg border border-dashed border-border p-3">
@@ -290,10 +292,13 @@ function AddTest({ policy, queue }: { policy: Policy; queue: (op: PatchOp) => vo
         </Button>
       </div>
 
+      {destinationIssue && <p className="text-xs text-danger">{destinationIssue}</p>}
+
       <p className="text-xs text-muted-foreground">
-        A destination is one host and one port — <code>tag:prod:22</code>. Ranges, CIDRs and
-        <code> autogroup:internet</code> have no single yes-or-no answer, so Headscale rejects them
-        here.
+        A destination is one host and one port — <code>tag:prod:22</code>. Ranges, CIDRs, a host
+        alias that resolves to a CIDR, and <code>autogroup:internet</code> have no single
+        yes-or-no answer. Headscale rejects them while parsing, which stops the whole policy from
+        loading rather than failing one row.
       </p>
 
       {issues.length > 0 && (
@@ -322,35 +327,54 @@ function Simulator({
 
   const [src, setSrc] = useState(0)
   const [dst, setDst] = useState(0)
+  const [destinationMode, setDestinationMode] = useState<'device' | 'ip'>('device')
+  const [destinationIP, setDestinationIP] = useState('')
   const [port, setPort] = useState('22')
 
+  const request = simulationRequest(destinationMode, src, dst, destinationIP, port)
+
   const simulate = useMutation({
-    mutationFn: () =>
-      api.simulate({
-        src,
-        dst,
-        port: Number(port),
+    mutationFn: () => {
+      if ('error' in request) return Promise.reject(new Error(request.error))
+
+      return api.simulate({
+        ...request,
         ...(draft ? { sha256: policy.sha256, ...draft } : {}),
-      }),
+      })
+    },
   })
 
   useStaleReset(draft, simulate.reset)
 
   const list = devices.data?.devices ?? []
-  const ready = src !== 0 && dst !== 0 && Number(port) > 0
+  const ready = !('error' in request)
 
   return (
     <Section title="Reachability simulator">
-      <p className="text-sm text-muted-foreground">
-        Evaluated against the destination's own filter, so rules written with{' '}
-        <code>autogroup:self</code> count — they are compiled per node and never appear in the
-        tailnet-wide rule set.
-      </p>
+      <p className="text-sm text-muted-foreground">Device destinations use their own Headscale filter, including <code>autogroup:self</code>. An IP destination checks policy permission only.</p>
 
       <div className="flex flex-wrap items-end gap-2">
         <DevicePicker label="from" value={src} onChange={setSrc} devices={list} />
         <span className="pb-2 text-muted-foreground">→</span>
-        <DevicePicker label="to" value={dst} onChange={setDst} devices={list} />
+        <div>
+          <span className="text-xs text-muted-foreground">destination type</span>
+          <select
+            value={destinationMode}
+            onChange={(event) => setDestinationMode(event.target.value as 'device' | 'ip')}
+            className="block rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
+          >
+            <option value="device">Tailnet device</option>
+            <option value="ip">IP address</option>
+          </select>
+        </div>
+        {destinationMode === 'device' ? (
+          <DevicePicker label="to" value={dst} onChange={setDst} devices={list} />
+        ) : (
+          <div>
+            <span className="text-xs text-muted-foreground">IP address</span>
+            <Input value={destinationIP} onChange={setDestinationIP} placeholder="13.0.0.25" className="w-40 font-mono text-xs" />
+          </div>
+        )}
 
         <div>
           <span className="text-xs text-muted-foreground">port</span>
@@ -365,6 +389,7 @@ function Simulator({
       </div>
 
       {simulate.error && <ErrorNote error={simulate.error} />}
+      {'error' in request && <p className="text-xs text-warn">{request.error}</p>}
       {simulate.data && <SimulationResult sim={simulate.data} onJump={onJump} />}
     </Section>
   )
@@ -427,6 +452,12 @@ function SimulationResult({ sim, onJump }: { sim: Simulation; onJump: (pointer: 
             {sim.rule.dests.map((d) => `${d.label}:${d.ports}`).join(', ')}
           </span>
         </div>
+      )}
+
+      {sim.literalDestination && (
+        <p className="text-sm text-muted-foreground">
+          Policy allowed this traffic. Route approval, router forwarding, and the client accepting routes were not checked.
+        </p>
       )}
 
       {sim.because ? (

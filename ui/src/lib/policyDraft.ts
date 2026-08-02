@@ -1,4 +1,4 @@
-import type { AclRule, AclSchema, PatchOp } from './api'
+import type { AclRule, AclSchema, Grant, PatchOp } from './api'
 
 /**
  * The API query is the last saved schema; form tabs also need to render the
@@ -40,12 +40,63 @@ export function rulesWithPendingChanges(rules: AclRule[], pending: PatchOp[]): A
   return draft
 }
 
+export function grantsWithPendingChanges(grants: Grant[], pending: PatchOp[]): Grant[] {
+  const draft = grants.map(copyGrant)
+
+  for (const operation of pending) {
+    if (operation.path === '/grants') {
+      if ((operation.op === 'add' || operation.op === 'replace') && Array.isArray(operation.value) && operation.value.every(isGrant)) {
+        draft.splice(0, draft.length, ...operation.value.map(copyGrant))
+      }
+
+      if (operation.op === 'remove') draft.splice(0, draft.length)
+
+      continue
+    }
+
+    const match = operation.path.match(/^\/grants\/(\d+|-)$/)
+
+    if (!match) continue
+
+    const target = match[1]
+    const index = target === '-' ? draft.length : Number(target)
+
+    if (operation.op === 'add' && isGrant(operation.value)) {
+      draft.splice(index, 0, copyGrant(operation.value))
+    }
+
+    if (operation.op === 'replace' && isGrant(operation.value) && index < draft.length) {
+      draft[index] = copyGrant(operation.value)
+    }
+
+    if (operation.op === 'remove' && index < draft.length) {
+      draft.splice(index, 1)
+    }
+  }
+
+  return draft
+}
+
 function isAclRule(value: unknown): value is AclRule {
   return typeof value === 'object' && value !== null && 'action' in value && 'src' in value && 'dst' in value
 }
 
+function isGrant(value: unknown): value is Grant {
+  return typeof value === 'object' && value !== null && 'src' in value && 'dst' in value
+}
+
 function copyRule(rule: AclRule): AclRule {
   return { ...rule, src: [...rule.src], dst: [...rule.dst] }
+}
+
+function copyGrant(grant: Grant): Grant {
+  return {
+    ...grant,
+    src: [...grant.src],
+    dst: [...grant.dst],
+    ...(grant.ip ? { ip: [...grant.ip] } : {}),
+    ...(grant.via ? { via: [...grant.via] } : {}),
+  }
 }
 
 function applySchemaOperation(root: Record<string, unknown>, operation: PatchOp) {
@@ -82,19 +133,34 @@ function applySchemaOperation(root: Record<string, unknown>, operation: PatchOp)
     const index = key === '-' ? parent.length : arrayIndex(key)
     if (index < 0 || index > parent.length) return
 
-    if (operation.op === 'add') parent.splice(index, 0, operation.value)
-    else if (operation.op === 'replace' && index < parent.length) parent[index] = operation.value
+    if (operation.op === 'add') parent.splice(index, 0, detached(operation.value))
+    else if (operation.op === 'replace' && index < parent.length) parent[index] = detached(operation.value)
     else if (operation.op === 'remove' && index < parent.length) parent.splice(index, 1)
 
     return
   }
 
-  if (operation.op === 'add' || (operation.op === 'replace' && key in parent)) parent[key] = operation.value
-  else if (operation.op === 'remove') delete parent[key]
+  if (operation.op === 'add' || (operation.op === 'replace' && key in parent)) {
+    parent[key] = detached(operation.value)
+  } else if (operation.op === 'remove') delete parent[key]
+}
+
+/**
+ * detached copies a patch value on its way into the draft.
+ *
+ * Without it the draft holds the operation's own object, so a later operation
+ * addressing through that container writes back into the queued patch: staging
+ * `add /grants` then `add /grants/-` appended the second grant to the *first
+ * operation's* array. Every render projects again, so each pass grew the queue
+ * — three clicks rendered four cards, then six, and the list kept growing
+ * without anyone touching the button.
+ */
+function detached(value: unknown): unknown {
+  return typeof value === 'object' && value !== null ? structuredClone(value) : value
 }
 
 function editableSection(section: string) {
-  return ['groups', 'hosts', 'tagOwners', 'acls', 'ssh', 'autoApprovers', 'tests', 'sshTests'].includes(section)
+  return ['groups', 'hosts', 'tagOwners', 'acls', 'grants', 'ssh', 'autoApprovers', 'tests', 'sshTests'].includes(section)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

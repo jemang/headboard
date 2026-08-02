@@ -156,6 +156,14 @@ export interface AclRule {
   proto?: string
 }
 
+export interface Grant {
+  src: string[]
+  dst: string[]
+  ip?: string[]
+  app?: unknown
+  via?: string[]
+}
+
 export interface SshRule {
   action: string
   src: string[]
@@ -170,11 +178,11 @@ export interface AclSchema {
   hosts?: Record<string, string>
   tagOwners?: Record<string, string[]>
   acls?: AclRule[]
+  grants?: Grant[]
   ssh?: SshRule[]
   autoApprovers?: {
     routes?: Record<string, string[]>
     exitNode?: string[]
-    services?: Record<string, string[]>
   }
   tests?: AclTest[]
   sshTests?: SshTest[]
@@ -206,6 +214,7 @@ export interface Tokens {
 export interface Policy {
   hujson: string
   sha256: string
+  sections: string[]
   schema?: AclSchema
   tokens: Tokens
   editable: boolean
@@ -265,12 +274,17 @@ export interface Simulation {
   dest: Endpoint
   port: number
   allowed: boolean
+  literalDestination?: boolean
   because?: Attribution
   rule?: EffectiveRule
 }
 
 /** A pending change, so tests and the simulator can answer for a draft. */
 export type PolicyDraft = { sha256?: string; ops?: PatchOp[]; hujson?: string }
+
+export type SimulationRequest =
+  | ({ src: number; dst: number; destinationIP?: never; port: number } & PolicyDraft)
+  | ({ src: number; destinationIP: string; dst?: never; port: number } & PolicyDraft)
 
 export interface PolicyRevision {
   id: number
@@ -347,7 +361,7 @@ export const api = {
   policyRevisions: () => request<{ revisions: PolicyRevision[] }>('/api/policy/revisions'),
   runPolicyTests: (draft?: PolicyDraft) =>
     send<TestRun>('POST', '/api/policy/tests', draft ?? {}),
-  simulate: (body: { src: number; dst: number; port: number } & PolicyDraft) =>
+  simulate: (body: SimulationRequest) =>
     send<Simulation>('POST', '/api/policy/simulate', body),
 
   preAuthKeys: () => request<{ keys: PreAuthKey[] }>('/api/preauth-keys'),

@@ -26,6 +26,11 @@ type PolicyBody struct {
 	// Schema is the same document decoded for the form.
 	Schema *acl.Schema `json:"schema,omitempty"`
 
+	// Sections records the stored top-level policy keys. Empty arrays are
+	// omitted while encoding Schema, but their presence changes Headscale's
+	// default policy semantics.
+	Sections []string `json:"sections"`
+
 	// Tokens is the picker vocabulary: only aliases that actually resolve.
 	Tokens acl.Tokens `json:"tokens"`
 
@@ -311,6 +316,11 @@ func policyBodyFor(hujson string, users []types.User) (PolicyBody, error) {
 	}
 
 	out.Schema = schema
+	for _, section := range []string{"acls", "grants"} {
+		if doc.Find("/"+section) != nil {
+			out.Sections = append(out.Sections, section)
+		}
+	}
 	out.Tokens = schema.TokensFor(usernames)
 
 	return out, nil

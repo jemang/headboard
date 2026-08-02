@@ -7,6 +7,7 @@ import (
 	policyv2 "github.com/juanfont/headscale/hscontrol/policy/v2"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"tailscale.com/tailcfg"
+	"tailscale.com/types/views"
 )
 
 // Simulation answers "can A reach B on port N", and says why.
@@ -16,6 +17,11 @@ type Simulation struct {
 	Port   uint16   `json:"port"`
 
 	Allowed bool `json:"allowed"`
+
+	// LiteralDestination marks an answer for an address that is not a
+	// Tailnet node. Route approval and packet forwarding are outside the
+	// policy engine and must be presented separately by the UI.
+	LiteralDestination bool `json:"literalDestination,omitempty"`
 
 	// Because points at the policy entry responsible for an allow. Nil when
 	// the connection is denied, or when no single entry could be credited.
@@ -89,6 +95,50 @@ func (m *Manager) Simulate(src, dst types.NodeID, port uint16) (Simulation, erro
 	return sim, nil
 }
 
+// SimulateIP evaluates a connection from one Tailnet node to a literal IP
+// address. A literal destination has no Tailnet identity, so normal grants
+// come from the global filter while via grants come from filters compiled for
+// routers that serve the destination's approved route.
+func (m *Manager) SimulateIP(src types.NodeID, dst netip.Addr, port uint16) (Simulation, error) {
+	m.mu.RLock()
+
+	srcNode, srcOK := m.byID[src]
+	if !srcOK {
+		m.mu.RUnlock()
+
+		return Simulation{}, fmt.Errorf("%w: source %d", ErrUnknownNode, src)
+	}
+
+	pm, labels, nodes := m.pm, m.labels, m.views
+	m.mu.RUnlock()
+
+	sim := Simulation{
+		Source:             labels.endpoint(firstIP(srcNode)),
+		Dest:               labels.endpoint(dst.String()),
+		Port:               port,
+		LiteralDestination: true,
+	}
+
+	match := firstAllowingIPRule(pm, nodes, srcNode, dst, port)
+	if match == nil {
+		return sim, nil
+	}
+
+	sim.Allowed = true
+
+	decorated := m.decorateOne(*match)
+	sim.Rule = &decorated
+
+	because, err := m.attributeIP(nodes, srcNode, dst, port)
+	if err != nil {
+		return sim, nil
+	}
+
+	sim.Because = because
+
+	return sim, nil
+}
+
 // firstAllowingRule returns the first rule in the destination's filter that
 // permits src to reach dst on port, or nil if none does.
 func firstAllowingRule(
@@ -112,6 +162,53 @@ func firstAllowingRule(
 	return nil, nil
 }
 
+// filterRulesForAddr returns rules that can apply to a literal address.
+// Headscale omits via grants from Filter(), so router-specific filters are
+// included for nodes that serve an approved subnet or exit route containing
+// the address.
+func filterRulesForAddr(
+	pm *policyv2.PolicyManager,
+	nodes views.Slice[types.NodeView],
+	dst netip.Addr,
+) []tailcfg.FilterRule {
+	rules, _ := pm.Filter()
+
+	for _, node := range nodes.All() {
+		for _, route := range node.AllApprovedRoutes() {
+			if !route.Contains(dst) {
+				continue
+			}
+
+			perNode, err := pm.FilterForNode(node)
+			if err == nil {
+				rules = append(rules, perNode...)
+			}
+
+			break
+		}
+	}
+
+	return rules
+}
+
+func firstAllowingIPRule(
+	pm *policyv2.PolicyManager,
+	nodes views.Slice[types.NodeView],
+	src types.NodeView,
+	dst netip.Addr,
+	port uint16,
+) *tailcfg.FilterRule {
+	rules := filterRulesForAddr(pm, nodes, dst)
+
+	for i := range rules {
+		if allows(rules[i], src.IPs(), []netip.Addr{dst}, port) {
+			return &rules[i]
+		}
+	}
+
+	return nil
+}
+
 // attribute finds the policy entry responsible for allowing a connection, by
 // asking each entry on its own.
 func (m *Manager) attribute(src, dst types.NodeView, port uint16) (*Attribution, error) {
@@ -123,6 +220,32 @@ func (m *Manager) attribute(src, dst types.NodeView, port uint16) (*Attribution,
 	for _, e := range entries {
 		match, err := firstAllowingRule(e.pm, src, dst, port)
 		if err != nil || match == nil {
+			continue
+		}
+
+		return &Attribution{
+			Section: e.section,
+			Index:   e.index,
+			Pointer: fmt.Sprintf("/%s/%d", e.section, e.index),
+		}, nil
+	}
+
+	return nil, nil
+}
+
+func (m *Manager) attributeIP(
+	nodes views.Slice[types.NodeView],
+	src types.NodeView,
+	dst netip.Addr,
+	port uint16,
+) (*Attribution, error) {
+	entries, err := m.attributionFor()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, e := range entries {
+		if firstAllowingIPRule(e.pm, nodes, src, dst, port) == nil {
 			continue
 		}
 

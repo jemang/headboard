@@ -54,10 +54,15 @@ type NodeAttr struct {
 }
 
 // AutoApprovers decides which routes get approved without an admin clicking.
+//
+// Tailscale's SaaS policy also carries a services map here. Headscale v0.29.3
+// does not: policyv2.AutoApproverPolicy has only routes and exitNode, and
+// unmarshalPolicy rejects unknown members, so a document containing services
+// fails to compile with `unknown field: "services"` — the whole policy, not
+// just that entry. Offering it in the form made every subsequent save fail.
 type AutoApprovers struct {
 	Routes   map[string][]string `json:"routes,omitempty"`
 	ExitNode []string            `json:"exitNode,omitempty"`
-	Services map[string][]string `json:"services,omitempty"`
 }
 
 // SSHRule is one entry in ssh.

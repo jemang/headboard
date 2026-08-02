@@ -12,11 +12,12 @@ import type { Tokens } from '../lib/api'
  * Headplane's raw editor has.
  */
 
-export type Slot = 'src' | 'dst'
+export type Slot = 'src' | 'acl-dst' | 'grant-dst' | 'via' | 'ip'
 
 export interface TokenIssue {
   token: string
   reason: string
+  severity: 'blocking' | 'warning'
 }
 
 /** validate reports which tokens will not resolve. */
@@ -24,18 +25,28 @@ export function validateTokens(values: string[], tokens: Tokens, slot: Slot): To
   return values.flatMap((v) => {
     const issue = validateToken(v, tokens, slot)
 
-    return issue ? [{ token: v, reason: issue }] : []
+    return issue ? [{ token: v, ...issue }] : []
   })
 }
 
-function validateToken(value: string, tokens: Tokens, slot: Slot): string | undefined {
-  if (value === '' ) return 'empty'
+function validateToken(
+  value: string,
+  tokens: Tokens,
+  slot: Slot,
+): Omit<TokenIssue, 'token'> | undefined {
+  if (value === '') return { reason: 'empty', severity: 'blocking' }
   if (value === '*') return undefined
 
-  // A destination carries a port suffix; a source never does.
+  if (slot === 'ip') {
+    return isProtocolPortSpec(value)
+      ? undefined
+      : { reason: 'use *, a port, a range, or tcp:/udp:/sctp: with one', severity: 'blocking' }
+  }
+
+  // An ACL destination carries a port suffix; a grant destination does not.
   let base = value
 
-  if (slot === 'dst') {
+  if (slot === 'acl-dst') {
     const cut = value.lastIndexOf(':')
 
     if (cut > 0) {
@@ -43,36 +54,46 @@ function validateToken(value: string, tokens: Tokens, slot: Slot): string | unde
 
       const ports = value.slice(cut + 1)
 
-      if (!isPortSpec(ports)) return `"${ports}" is not a port, a range, or *`
+      if (!isPortSpec(ports)) return { reason: `"${ports}" is not a port, a range, or *`, severity: 'blocking' }
     } else if (!value.startsWith('autogroup:')) {
-      return 'a destination needs a port, e.g. tag:prod:443'
+      return { reason: 'a destination needs a port, e.g. tag:prod:443', severity: 'blocking' }
     }
+  }
+
+  if (slot === 'via' && !base.startsWith('tag:')) {
+    return { reason: 'a route constraint must be a tag', severity: 'blocking' }
   }
 
   if (base.startsWith('autogroup:')) {
     // autogroup:self is written as a bare prefix in destinations.
     const known = tokens.autogroups.some((a) => base === a || base.startsWith(a))
 
-    return known ? undefined : `unknown autogroup "${base}"`
+    return known ? undefined : { reason: `unknown autogroup "${base}"`, severity: 'blocking' }
   }
 
   if (base.startsWith('group:')) {
-    return tokens.groups.includes(base) ? undefined : `no group named "${base}" is defined`
+    return tokens.groups.includes(base)
+      ? undefined
+      : { reason: `no group named "${base}" is defined`, severity: 'warning' }
   }
 
   if (base.startsWith('tag:')) {
-    return tokens.tags.includes(base) ? undefined : `"${base}" has no owner in tagOwners`
+    return tokens.tags.includes(base)
+      ? undefined
+      : { reason: `"${base}" has no owner in tagOwners`, severity: 'warning' }
   }
 
   if (base.endsWith('@')) {
-    return tokens.users.includes(base) ? undefined : `no user named "${base}"`
+    return tokens.users.includes(base)
+      ? undefined
+      : { reason: `no user named "${base}"`, severity: 'warning' }
   }
 
   if (tokens.hosts.includes(base)) return undefined
 
   if (isCidrOrIP(base)) return undefined
 
-  return `"${base}" is not a known user, group, tag, host or CIDR`
+  return { reason: `"${base}" is not a known user, group, tag, host or CIDR`, severity: 'warning' }
 }
 
 function isPortSpec(s: string): boolean {
@@ -82,6 +103,14 @@ function isPortSpec(s: string): boolean {
     const [a, b] = part.split('-')
 
     return isPort(a) && (b === undefined || isPort(b))
+  })
+}
+
+function isProtocolPortSpec(s: string): boolean {
+  return s.split(',').every((part) => {
+    const [, ports = part] = part.match(/^(?:tcp|udp|sctp):(.*)$/) ?? []
+
+    return isPortSpec(ports)
   })
 }
 
@@ -117,13 +146,17 @@ export function TokenPicker({
   const inputRef = useRef<HTMLInputElement>(null)
 
   const suggestions = useMemo(() => {
-    const all = [
-      ...tokens.users,
-      ...tokens.groups,
-      ...tokens.tags,
-      ...tokens.hosts,
-      ...tokens.autogroups,
-    ]
+    if (slot === 'ip') return []
+
+    const all = slot === 'via'
+      ? tokens.tags
+      : [
+          ...tokens.users,
+          ...tokens.groups,
+          ...tokens.tags,
+          ...tokens.hosts,
+          ...tokens.autogroups,
+        ]
 
     const q = draft.toLowerCase()
 
@@ -149,7 +182,7 @@ export function TokenPicker({
         return (
           <span
             key={`${v}-${i}`}
-            title={issue}
+            title={issue?.reason}
             className={clsx(
               'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs',
               issue
@@ -203,7 +236,7 @@ export function TokenPicker({
                 className="block w-full px-2.5 py-1 text-left font-mono text-xs hover:bg-surface-2"
                 onMouseDown={(e) => {
                   e.preventDefault()
-                  add(slot === 'dst' && !s.startsWith('autogroup:') ? `${s}:` : s)
+                  add(slot === 'acl-dst' && !s.startsWith('autogroup:') ? `${s}:` : s)
                 }}
               >
                 {s}

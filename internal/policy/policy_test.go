@@ -300,6 +300,89 @@ func TestSimulateMatchesPolicy(t *testing.T) {
 	}
 }
 
+func TestSimulateIPMatchesLiteralAndViaGrants(t *testing.T) {
+	users, nodes := tailnet()
+
+	agent := nodes[0]
+	agent.ID = 6
+	agent.Hostname = "agent"
+	agent.GivenName = "agent"
+	agent.IPv4 = ptr(netip.MustParseAddr("100.64.0.6"))
+	agent.Tags = types.Strings{"tag:agent"}
+	nodes[3].Tags = types.Strings{"tag:router"}
+	nodes = append(nodes, agent)
+
+	const grants = `{
+	  "tagOwners": {
+	    "tag:agent": ["ops@"],
+	    "tag:router": ["ops@"],
+	  },
+	  "grants": [
+	    {"src": ["tag:agent"], "dst": ["10.0.0.0/24"], "ip": ["22"]},
+	  ],
+	}`
+
+	const viaGrants = `{
+	  "tagOwners": {
+	    "tag:agent": ["ops@"],
+	    "tag:router": ["ops@"],
+	  },
+	  "grants": [
+	    {"src": ["tag:agent"], "dst": ["10.0.0.0/24"], "ip": ["22"], "via": ["tag:router"]},
+	  ],
+	}`
+
+	for _, tc := range []struct {
+		name   string
+		policy string
+	}{
+		{name: "literal grant", policy: grants},
+		{name: "via subnet router", policy: viaGrants},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := New(tc.policy, users, nodes)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+
+			sim, err := m.SimulateIP(6, netip.MustParseAddr("10.0.0.25"), 22)
+			if err != nil {
+				t.Fatalf("SimulateIP: %v", err)
+			}
+			if !sim.Allowed || !sim.LiteralDestination {
+				t.Fatalf("simulation = %+v, want an allowed literal destination", sim)
+			}
+			if sim.Because == nil || sim.Because.Pointer != "/grants/0" {
+				t.Fatalf("because = %+v, want /grants/0", sim.Because)
+			}
+		})
+	}
+
+	m, err := New(grants, users, nodes)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		dst  netip.Addr
+		port uint16
+	}{
+		{name: "outside subnet", dst: netip.MustParseAddr("10.1.0.25"), port: 22},
+		{name: "wrong port", dst: netip.MustParseAddr("10.0.0.25"), port: 443},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sim, err := m.SimulateIP(6, tc.dst, tc.port)
+			if err != nil {
+				t.Fatalf("SimulateIP: %v", err)
+			}
+			if sim.Allowed || sim.Because != nil {
+				t.Fatalf("simulation = %+v, want denial without attribution", sim)
+			}
+		})
+	}
+}
+
 // Attribution has to survive a rule order the compiled output does not
 // preserve. The engine merges grants on the way to the wire format, so a naive
 // "index of the matching FilterRule" would credit the wrong row here.
@@ -398,6 +481,61 @@ func TestUnknownNodeIsAnError(t *testing.T) {
 
 	if _, err := m.Simulate(999, 1, 22); err == nil {
 		t.Error("Simulate(999, …): got nil error")
+	}
+}
+
+// A tests-block destination must name one machine. Getting that wrong is not a
+// red assertion: Headscale refuses the document while parsing it, so the whole
+// policy stops loading. Grants make it easy to hit, because their destinations
+// are subnets and `hosts` fills up with CIDR aliases that read like hosts.
+func TestTestDestinationMustBeASingleHost(t *testing.T) {
+	users, nodes := tailnet()
+
+	policyWith := func(dst string) string {
+		return `{
+  "hosts": {"lan": "10.0.0.0/24", "printer": "10.0.0.9", "printer32": "10.0.0.9/32"},
+  "grants": [{"src": ["ops@"], "dst": ["10.0.0.0/24"], "ip": ["*"]}],
+  "tests": [{"src": "ops@", "accept": ["` + dst + `"]}],
+}`
+	}
+
+	for _, dst := range []string{"10.0.0.0/24:22", "10.0.0.9/32:22", "lan:22"} {
+		if _, err := New(policyWith(dst), users, nodes); err == nil {
+			t.Errorf("%s: compiled, want a rejection", dst)
+		} else if !strings.Contains(err.Error(), "must be a single host") {
+			t.Errorf("%s: unexpected error: %v", dst, err)
+		}
+	}
+
+	// A prefix is refused even at /32, but an alias holding one is not.
+	for _, dst := range []string{"10.0.0.9:22", "printer:22", "printer32:22"} {
+		if _, err := New(policyWith(dst), users, nodes); err != nil {
+			t.Errorf("%s: rejected, want acceptance: %v", dst, err)
+		}
+	}
+}
+
+// Tailscale's autoApprovers carries a services map; Headscale's does not, and
+// its unmarshaller rejects unknown members. The form used to offer a services
+// section, which made every save after staging one fail — so the whole policy
+// is refused, not the single entry. Keep this red until a Headscale bump adds
+// the field on purpose.
+func TestServicesAutoApproversAreRejected(t *testing.T) {
+	users, nodes := tailnet()
+
+	_, err := New(`{
+  "tagOwners": {"tag:prod": ["ops@"]},
+  "autoApprovers": {
+    "routes": {"10.0.0.0/24": ["tag:prod"]},
+    "services": {"svc:example": ["tag:prod"]},
+  },
+}`, users, nodes)
+	if err == nil {
+		t.Fatal("a policy with autoApprovers.services compiled, want a rejection")
+	}
+
+	if !strings.Contains(err.Error(), "services") {
+		t.Errorf("error does not name the offending field: %v", err)
 	}
 }
 

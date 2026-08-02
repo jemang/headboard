@@ -1,23 +1,23 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type AclRule, type PatchOp, type Policy, type PolicyPreview, type SshRule } from '../lib/api'
+import { api, type Grant, type PatchOp, type Policy, type PolicyPreview, type SshRule } from '../lib/api'
 import { Button, Badge, Empty, ErrorNote, Input, Section } from '../components/ui'
 import { TokenPicker, validateTokens } from '../components/TokenPicker'
 import { TestsTab } from './AclTests'
 import { useToast } from '../components/Toast'
 import { Loading, Skeleton } from '../components/Skeleton'
-import { rulesWithPendingChanges, schemaWithPendingChanges } from '../lib/policyDraft'
+import { grantsWithPendingChanges, schemaWithPendingChanges } from '../lib/policyDraft'
+import { grantStageOp, jumpTarget, policyStateNotice, type PolicyTab } from '../lib/grantEditor'
+import { Link } from '../lib/router'
 import { Eye, Plus, Save, Trash2, Undo2 } from 'lucide-react'
 
-type Tab = 'rules' | 'groups' | 'tags' | 'hosts' | 'ssh' | 'auto' | 'tests' | 'raw'
-
-const tabs: { id: Tab; label: string }[] = [
-  { id: 'rules', label: 'Rules' },
+const tabs: { id: PolicyTab; label: string }[] = [
+  { id: 'grants', label: 'Grants' },
   { id: 'groups', label: 'Groups' },
   { id: 'tags', label: 'Tags' },
   { id: 'hosts', label: 'Hosts' },
   { id: 'ssh', label: 'SSH' },
-  { id: 'auto', label: 'Auto-approvers' },
+  { id: 'auto', label: 'Routing approvals' },
   { id: 'tests', label: 'Tests' },
   { id: 'raw', label: 'Raw HuJSON' },
 ]
@@ -25,7 +25,7 @@ const tabs: { id: Tab; label: string }[] = [
 export function Acl() {
   const qc = useQueryClient()
   const toast = useToast()
-  const [tab, setTab] = useState<Tab>('rules')
+  const [tab, setTab] = useState<PolicyTab>('grants')
   const [pending, setPending] = useState<PatchOp[]>([])
   const [rawDraft, setRawDraft] = useState<string | null>(null)
   const [highlight, setHighlight] = useState<string | null>(null)
@@ -80,9 +80,7 @@ export function Acl() {
   const jump = (pointer: string) => {
     setHighlight(pointer)
 
-    if (pointer.startsWith('/acls/')) setTab('rules')
-    else if (pointer.startsWith('/ssh/')) setTab('ssh')
-    else setTab('raw')
+    setTab(jumpTarget(pointer))
   }
 
   return (
@@ -109,6 +107,8 @@ export function Acl() {
         </div>
       )}
 
+      <PolicyStateNotice policy={p} onRaw={() => setTab('raw')} />
+
       <nav className="flex gap-1 overflow-x-auto border-b border-border pb-px" aria-label="Policy sections">
         {tabs.map((t) => (
           <button
@@ -126,7 +126,7 @@ export function Acl() {
         ))}
       </nav>
 
-      {tab === 'rules' && <RulesTab policy={p} pending={pending} queue={queue} highlight={highlight} />}
+      {tab === 'grants' && <GrantsTab policy={p} pending={pending} queue={queue} highlight={highlight} />}
       {tab === 'groups' && <MapListTab policy={p} pending={pending} section="groups" queue={queue} slot="src" />}
       {tab === 'tags' && <MapListTab policy={p} pending={pending} section="tagOwners" queue={queue} slot="src" />}
       {tab === 'hosts' && <HostsTab policy={p} pending={pending} queue={queue} />}
@@ -145,6 +145,7 @@ export function Acl() {
           }}
           dirty={rawDraft !== null}
           onReset={() => setRawDraft(null)}
+          location={tab === 'raw' ? highlight : null}
         />
       )}
 
@@ -259,7 +260,18 @@ function PreviewPanel({
   )
 }
 
-function RulesTab({
+function PolicyStateNotice({ policy, onRaw }: { policy: Policy; onRaw: () => void }) {
+  const notice = policyStateNotice(policy.sections ?? [], policy.schema ?? {})
+
+  return (
+    <div className={notice.tone === 'warn' ? 'rounded-lg border border-warn/40 bg-warn/10 p-3 text-sm' : 'rounded-lg border border-accent-500/25 bg-accent-500/5 p-3 text-sm'}>
+      <p>{notice.message}</p>
+      {notice.rawPointer && <Button variant="ghost" className="mt-1" onClick={onRaw}>Open Raw HuJSON ({notice.rawPointer})</Button>}
+    </div>
+  )
+}
+
+function GrantsTab({
   policy,
   pending,
   queue,
@@ -270,41 +282,36 @@ function RulesTab({
   queue: (op: PatchOp) => void
   highlight: string | null
 }) {
-  const rules = rulesWithPendingChanges(policy.schema?.acls ?? [], pending)
+  const grants = grantsWithPendingChanges(policy.schema?.grants ?? [], pending)
+  const hasGrantsSection = Object.hasOwn(schemaWithPendingChanges(policy.schema, pending), 'grants')
 
   return (
     <Section
-      title={`${rules.length} rule${rules.length === 1 ? '' : 's'}`}
+      title={`${grants.length} grant${grants.length === 1 ? '' : 's'}`}
       actions={
         <Button
           icon={Plus}
-          onClick={() =>
-            queue({
-              op: 'add',
-              path: '/acls/-',
-              value: { action: 'accept', src: [], dst: [] },
-            })
-          }
+          onClick={() => queue(grantStageOp('new', { src: [], dst: [], ip: ['*'] }, hasGrantsSection))}
         >
-          Add rule
+          Add grant
         </Button>
       }
     >
-      {rules.length === 0 && (
+      {grants.length === 0 && (
         <Empty
-          title="No rules yet"
-          hint="Add a rule to start defining access."
+          title="No grants yet"
+          hint="Add a grant to define who can reach a device, subnet, or service."
         />
       )}
       <ol className="space-y-2">
-        {rules.map((rule, i) => (
-          <RuleRow
+        {grants.map((grant, i) => (
+          <GrantRow
             key={i}
             index={i}
-            rule={rule}
+            grant={grant}
             policy={policy}
             queue={queue}
-            highlighted={highlight === `/acls/${i}`}
+            highlighted={highlight === `/grants/${i}`}
           />
         ))}
       </ol>
@@ -312,32 +319,38 @@ function RulesTab({
   )
 }
 
-function RuleRow({
+function GrantRow({
   index,
-  rule,
+  grant,
   policy,
   queue,
   highlighted,
 }: {
   index: number
-  rule: AclRule
+  grant: Grant
   policy: Policy
   queue: (op: PatchOp) => void
   highlighted?: boolean
 }) {
-  const [src, setSrc] = useState(rule.src ?? [])
-  const [dst, setDst] = useState(rule.dst ?? [])
+  const [src, setSrc] = useState(grant.src ?? [])
+  const [dst, setDst] = useState(grant.dst ?? [])
+  const [ip, setIP] = useState(grant.ip ?? [])
+  const [via, setVia] = useState(grant.via ?? [])
 
   const issues = useMemo(
     () => [
       ...validateTokens(src, policy.tokens, 'src'),
-      ...validateTokens(dst, policy.tokens, 'dst'),
+      ...validateTokens(dst, policy.tokens, 'grant-dst'),
+      ...validateTokens(ip, policy.tokens, 'ip'),
+      ...validateTokens(via, policy.tokens, 'via'),
     ],
-    [src, dst, policy.tokens],
+    [src, dst, ip, via, policy.tokens],
   )
 
-  const dirty = JSON.stringify(src) !== JSON.stringify(rule.src) ||
-    JSON.stringify(dst) !== JSON.stringify(rule.dst)
+  const next = { src, dst, ip, ...(via.length ? { via } : {}) }
+  const dirty = JSON.stringify(next) !== JSON.stringify({ src: grant.src ?? [], dst: grant.dst ?? [], ip: grant.ip ?? [], ...(grant.via?.length ? { via: grant.via } : {}) })
+  const blocking = issues.some((issue) => issue.severity === 'blocking')
+  const routeGuidance = via.length > 0 || dst.some((value) => /[.:]/.test(value))
 
   return (
     <li
@@ -347,9 +360,13 @@ function RuleRow({
           : 'rounded-lg border border-border bg-surface-1 p-3'
       }
     >
-      <div className="flex flex-wrap items-start gap-2">
+      {grant.app !== undefined ? (
+        <div className="space-y-1">
+          <Badge tone="warn">Raw HuJSON only</Badge>
+          <p className="text-sm text-muted-foreground">This grant contains application capabilities. It stays in place and can only be edited in Raw HuJSON.</p>
+        </div>
+      ) : <div className="flex flex-wrap items-start gap-2">
         <span className="mt-1.5 w-8 shrink-0 font-mono text-xs text-muted-foreground">#{index}</span>
-        <Badge tone="accent">{rule.action}</Badge>
 
         <div className="flex min-w-64 flex-1 flex-col gap-1">
           <span className="text-xs text-muted-foreground">from</span>
@@ -370,39 +387,48 @@ function RuleRow({
             values={dst}
             onChange={setDst}
             tokens={policy.tokens}
-            slot="dst"
-            placeholder="tag:prod:443, autogroup:self:*…"
+            slot="grant-dst"
+            placeholder="tag:prod, 13.0.0.0/24…"
           />
+        </div>
+
+        <div className="flex min-w-40 flex-1 flex-col gap-1">
+          <span className="text-xs text-muted-foreground">ports</span>
+          <TokenPicker values={ip} onChange={setIP} tokens={policy.tokens} slot="ip" placeholder="*, tcp:443…" />
+        </div>
+
+        <div className="flex min-w-40 flex-1 flex-col gap-1">
+          <span className="text-xs text-muted-foreground">via (optional)</span>
+          <TokenPicker values={via} onChange={setVia} tokens={policy.tokens} slot="via" placeholder="tag:router…" />
         </div>
 
         <div className="mt-5 flex gap-1">
           <Button
-            disabled={!dirty || issues.length > 0}
-            onClick={() =>
-              queue({ op: 'replace', path: `/acls/${index}`, value: { ...rule, src, dst } })
-            }
+            disabled={!dirty || src.length === 0 || dst.length === 0 || ip.length === 0 || blocking}
+            onClick={() => queue(grantStageOp(index, next, true))}
           >
             Stage
           </Button>
           <Button
             variant="ghost"
             icon={Trash2}
-            onClick={() => queue({ op: 'remove', path: `/acls/${index}` })}
+            onClick={() => queue({ op: 'remove', path: `/grants/${index}` })}
           >
             Delete
           </Button>
         </div>
-      </div>
+      </div>}
 
       {issues.length > 0 && (
         <ul className="mt-2 space-y-0.5 pl-10 text-xs text-danger">
           {issues.map((issue) => (
-            <li key={issue.token}>
+            <li key={issue.token} className={issue.severity === 'warning' ? 'text-warn' : ''}>
               <span className="font-mono">{issue.token}</span> — {issue.reason}
             </li>
           ))}
         </ul>
       )}
+      {routeGuidance && grant.app === undefined && <p className="mt-2 text-xs text-muted-foreground">Policy permission is separate from routing: advertise and approve the route, enable forwarding, and have clients accept routes. See <Link to="/devices" className="text-accent-700 underline underline-offset-2 dark:text-accent-400">Devices</Link> and Routing approvals.</p>}
     </li>
   )
 }
@@ -670,6 +696,7 @@ function AutoApproversTab({
 
   return (
     <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">These entries approve route advertisements automatically. They do not grant traffic; use a Grant for access permission.</p>
       <AutoApproverMap
         title="routes"
         entries={auto?.routes ?? {}}
@@ -681,16 +708,6 @@ function AutoApproversTab({
       />
 
       <ExitNodeApprovers policy={policy} owners={auto?.exitNode ?? []} auto={auto} queue={queue} />
-
-      <AutoApproverMap
-        title="services"
-        entries={auto?.services ?? {}}
-        policy={policy}
-        placeholder="svc:example"
-        onAdd={(name) => queueAutoApproverMap(queue, auto, 'services', name)}
-        onStage={(name, owners) => queue({ op: 'replace', path: `/autoApprovers/services/${escape(name)}`, value: owners })}
-        onDelete={(name) => queue({ op: 'remove', path: `/autoApprovers/services/${escape(name)}` })}
-      />
     </div>
   )
 }
@@ -787,7 +804,7 @@ function ExitNodeApprovers({
 function queueAutoApproverMap(
   queue: (op: PatchOp) => void,
   auto: NonNullable<Policy['schema']>['autoApprovers'],
-  section: 'routes' | 'services',
+  section: 'routes',
   name: string,
 ) {
   if (!auto) queue({ op: 'add', path: '/autoApprovers', value: { [section]: { [name]: [] } } })
@@ -800,11 +817,13 @@ function RawTab({
   onChange,
   dirty,
   onReset,
+  location,
 }: {
   text: string
   onChange: (v: string) => void
   dirty: boolean
   onReset: () => void
+  location: string | null
 }) {
   return (
     <div className="space-y-2">
@@ -818,6 +837,7 @@ function RawTab({
           </Button>
         )}
       </div>
+      {location && <p className="text-xs text-muted-foreground">Policy location: <code>{location}</code></p>}
       <textarea
         value={text}
         onChange={(e) => onChange(e.target.value)}

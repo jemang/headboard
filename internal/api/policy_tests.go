@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/juanfont/headscale/hscontrol/types"
@@ -33,8 +35,39 @@ type policyDraftInput struct {
 
 		Source uint64 `json:"src,omitempty"`
 		Dest   uint64 `json:"dst,omitempty"`
-		Port   uint16 `json:"port,omitempty"`
+
+		DestinationIP string `json:"destinationIP,omitempty"`
+		Port          uint16 `json:"port,omitempty"`
 	}
+}
+
+type simulationDestination struct {
+	nodeID  types.NodeID
+	addr    netip.Addr
+	literal bool
+}
+
+func parseSimulationDestination(dst uint64, destinationIP string) (simulationDestination, error) {
+	destinationIP = strings.TrimSpace(destinationIP)
+
+	if (dst == 0) == (destinationIP == "") {
+		return simulationDestination{}, errors.New("choose one destination")
+	}
+
+	if dst != 0 {
+		return simulationDestination{nodeID: types.NodeID(dst)}, nil
+	}
+
+	if strings.Contains(destinationIP, "/") {
+		return simulationDestination{}, errors.New("enter one IPv4 or IPv6 address, not a CIDR")
+	}
+
+	addr, err := netip.ParseAddr(destinationIP)
+	if err != nil {
+		return simulationDestination{}, errors.New("enter a valid IPv4 or IPv6 address")
+	}
+
+	return simulationDestination{addr: addr, literal: true}, nil
 }
 
 func init() {
@@ -69,21 +102,26 @@ func init() {
 			OperationID: "simulateConnection",
 			Method:      http.MethodPost,
 			Path:        "/api/policy/simulate",
-			Summary:     "Can this device reach that device on this port?",
-			Description: "Evaluated against the destination's own filter, so rules using " +
-				"autogroup:self are included. Answers for a draft policy when one is sent.",
+			Summary:     "Can this device reach a device or IP address on this port?",
+			Description: "Device destinations use their own filter, so rules using " +
+				"autogroup:self are included. Literal IP answers are policy-only. Answers for a draft policy when one is sent.",
 			Tags: []string{"policy"},
 		}, func(ctx context.Context, in *policyDraftInput) (*struct{ Body policy.Simulation }, error) {
 			if _, err := require(ctx, auth.CapManagePolicy); err != nil {
 				return nil, err
 			}
 
-			if in.Body.Source == 0 || in.Body.Dest == 0 {
-				return nil, huma.Error422UnprocessableEntity("choose a source and a destination")
+			if in.Body.Source == 0 {
+				return nil, huma.Error422UnprocessableEntity("choose a source")
 			}
 
 			if in.Body.Port == 0 {
 				return nil, huma.Error422UnprocessableEntity("choose a port")
+			}
+
+			destination, err := parseSimulationDestination(in.Body.Dest, in.Body.DestinationIP)
+			if err != nil {
+				return nil, huma.Error422UnprocessableEntity(err.Error())
 			}
 
 			manager, draft, err := draftManager(ctx, deps, in)
@@ -102,11 +140,12 @@ func init() {
 				}
 			}
 
-			sim, err := manager.Simulate(
-				types.NodeID(in.Body.Source),
-				types.NodeID(in.Body.Dest),
-				in.Body.Port,
-			)
+			var sim policy.Simulation
+			if destination.literal {
+				sim, err = manager.SimulateIP(types.NodeID(in.Body.Source), destination.addr, in.Body.Port)
+			} else {
+				sim, err = manager.Simulate(types.NodeID(in.Body.Source), destination.nodeID, in.Body.Port)
+			}
 			if err != nil {
 				if errors.Is(err, policy.ErrUnknownNode) {
 					return nil, huma.Error404NotFound("no such device", err)
