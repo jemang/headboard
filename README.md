@@ -28,6 +28,16 @@ resolution and rule reduction stay correct on the day Headscale changes them.
 **The trade:** Headboard is compiled against one Headscale version (`v0.29.3`). Upgrade the server
 and the `go.mod` pin together.
 
+## Screenshots
+
+### Tailnet dashboard
+
+![Headboard dashboard showing the tailnet device inventory](docs/images/headboard-dashboard.png)
+
+### Access-control workbench
+
+![Headboard access-control workbench showing editable policy rules](docs/images/headboard-acl.png)
+
 ## Requirements
 
 - Headscale **v0.29.x** with `policy.mode = database` (ACL writes over the API need it)
@@ -37,16 +47,127 @@ and the `go.mod` pin together.
 Nothing else. Headboard's own store is a SQLite file, and it creates its first administrator
 itself — an identity provider is optional and can be added later.
 
-## Run
+## Deploy
+
+Headboard needs an existing, reachable Headscale REST API and one of its admin API keys. It does
+not start, configure, or replace Headscale. `HEADSCALE_URL` is the **Headscale server base URL**:
+Headboard calls `<HEADSCALE_URL>/version` and `<HEADSCALE_URL>/api/v1/node`. Do not put the
+Headboard URL, or another web UI in this variable — an HTML response or a 404 means the
+URL or reverse-proxy route is wrong.
+
+### 1. Create the environment file
 
 ```sh
-cp .env.example .env   # set HEADSCALE_URL, HEADSCALE_API_KEY, and an HTTPS HEADBOARD_PUBLIC_URL
-docker compose up --build
+cp .env.example .env
 ```
 
-`HEADBOARD_PUBLIC_URL` must be the externally reachable `https://` address in a normal
-deployment. The service refuses to start over plain HTTP outside `HEADBOARD_DEV=true`, which keeps
-session cookies secure.
+For a normal HTTPS deployment, set these values in `.env`:
+
+```env
+HEADSCALE_URL=https://headscale.example.com
+HEADSCALE_API_KEY=hskey-api-...
+HEADBOARD_PUBLIC_URL=https://headboard.example.com
+```
+
+`HEADBOARD_PUBLIC_URL` is the address a browser uses. It must be the externally reachable
+`https://` address in a normal deployment; the service refuses plain HTTP outside
+`HEADBOARD_DEV=true`, keeping session cookies secure. If a reverse proxy serves Headboard at a
+path, include it here — for example, `https://vpn.example.com/manage`.
+
+Headscale itself may use `http://` only for an isolated local/private setup. Do not use HTTP to a
+remote production server: the Headscale admin API key would travel unencrypted.
+
+### Option A: build from this checkout
+
+Use this when you have the source checkout and want Docker Compose to build the image locally:
+
+```sh
+docker compose -p headboard up -d --build
+docker compose -p headboard logs -f headboard
+```
+
+This uses [`compose.yaml`](compose.yaml), creates the `headboard-data` volume, and publishes the
+port configured in that file. To stop it later without deleting accounts, sessions, audit history,
+or policy history:
+
+```sh
+docker compose -p headboard down
+```
+
+### Option B: pull a published release image
+
+Use [`compose.release.yaml`](compose.release.yaml) when deploying a tagged release. It pulls
+`ghcr.io/jemang/headboard`; choose a fixed tag rather than `latest`:
+
+```env
+# Add to .env
+HEADBOARD_VERSION=0.2.0
+```
+
+Then pull and start it:
+
+```sh
+docker compose -p headboard -f compose.release.yaml pull
+docker compose -p headboard -f compose.release.yaml up -d
+docker compose -p headboard -f compose.release.yaml logs -f headboard
+```
+
+For a private registry package, authenticate on the deployment host before the pull:
+
+```sh
+docker login ghcr.io
+```
+
+To upgrade, change `HEADBOARD_VERSION` in `.env`, then repeat `pull` and `up -d`. Docker Compose
+preserves the `headboard-data` volume, so the Headboard database survives an image upgrade.
+
+### Option C: build a local tagged image, then run the release Compose file
+
+This is useful for testing the release container before publishing it. Build an image with the
+same name that [`compose.release.yaml`](compose.release.yaml) expects:
+
+```sh
+docker buildx build --load \
+  --platform linux/arm64 \
+  --build-arg VERSION=0.2.0-local \
+  -t ghcr.io/jemang/headboard:0.2.0-local \
+  .
+```
+
+Use `linux/amd64` on an Intel/Linux host. Add this to `.env`:
+
+```env
+HEADBOARD_VERSION=0.2.0-local
+```
+
+Start without pulling from GHCR, because the image already exists locally:
+
+```sh
+docker compose -p headboard-local -f compose.release.yaml up -d --pull never
+```
+
+### Local HTTP test only
+
+When running Headboard locally without TLS, use the embedded UI in the release image and make the
+port and public URL agree. For a `3001:3000` mapping, for example:
+
+```env
+HEADBOARD_PUBLIC_URL=http://127.0.0.1:3001
+HEADBOARD_DEV=true
+HEADBOARD_DEV_UI_PROXY=
+```
+
+`HEADBOARD_DEV=true` does not prevent Headboard from contacting a Headscale server. It only enables
+local-development behavior, including non-secure session cookies. `HEADBOARD_DEV_UI_PROXY=` is
+important in a container: without that explicit empty value, development mode tries to proxy the UI
+to Vite at `127.0.0.1:5173`, which does not run inside the release image. Do not use either setting
+for a public deployment.
+
+If you change the host side of the Compose port mapping, change `HEADBOARD_PUBLIC_URL` to the same
+host port. The container always listens on port `3000`; for example, `3001:3000` is reached at
+`http://127.0.0.1:3001`.
+
+### First sign-in
 
 On the first start Headboard creates an owner account and prints its password **once**:
 
@@ -60,7 +181,7 @@ Shown once — change it after signing in.
 ────────────────────────────────────────────────────
 ```
 
-Open <http://localhost:3000>, sign in with that, and change it under *Account*.
+Open `HEADBOARD_PUBLIC_URL`, sign in with that password, and change it under *Account*.
 
 Lost it? Start once with `HEADBOARD_ADMIN_RESET=1` and a fresh password is printed the same way.
 Unset it afterwards.
@@ -83,6 +204,7 @@ Everything is environment variables. The ones without a default must be set.
 | `HEADBOARD_ADMIN_RESET` | `false` | Mint and print a new owner password at startup |
 | `HEADBOARD_PUBLIC_URL` | `http://127.0.0.1:3000` | Where browsers reach Headboard. Required to use `https://` outside development; the OIDC redirect is derived from it |
 | `HEADBOARD_DEV` | `false` | Enables local development conveniences, including HTTP session cookies. Do not set in production |
+| `HEADBOARD_DEV_UI_PROXY` | `http://127.0.0.1:5173` in development | Set to an empty value with `HEADBOARD_DEV=true` in a container to serve the embedded UI instead of proxying to Vite |
 | `OIDC_ISSUER` | — | Optional. Same issuer as Headscale — see below |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | Client registered with that issuer |
 | `HEADBOARD_POLL_INTERVAL` | `5s` | Headscale has no event stream; this is the staleness bound |

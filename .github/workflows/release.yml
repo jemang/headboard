@@ -1,0 +1,94 @@
+# Publishes a multi-arch image to GHCR when a version tag is pushed.
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# Tests run first and the push is a separate job that needs them, so a red
+# suite cannot produce a published tag.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish, e.g. 0.2.0'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The toolchain is pinned in .tool-versions because Headscale is a
+      # compile-time dependency here, not just an HTTP peer.
+      - uses: jdx/mise-action@v2
+
+      - name: UI
+        run: |
+          mise exec -- pnpm --dir ui install --frozen-lockfile
+          mise exec -- pnpm --dir ui exec vitest run
+          mise exec -- pnpm --dir ui exec tsc -b
+          mise exec -- pnpm --dir ui build
+
+      # ui/embed.go embeds ui/dist, so the Go build needs the UI built first.
+      - name: Go
+        run: mise exec -- go test ./...
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
+
+      # No QEMU: the Dockerfile builds on $BUILDPLATFORM and cross-compiles,
+      # so the arm64 leg costs a GOARCH flag rather than an emulated toolchain.
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ github.sha }}
+            CREATED=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Lets anyone verify the image came from this workflow and commit:
+      #   gh attestation verify oci://ghcr.io/OWNER/headboard:TAG --owner OWNER
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

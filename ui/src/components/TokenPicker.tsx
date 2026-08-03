@@ -9,7 +9,7 @@ import type { Tokens } from '../lib/api'
  * above in this document, tags that actually have an owner, hosts, plus the
  * autogroups the policy language defines. Anything typed that is not one of
  * those is flagged before save rather than after — which is the failure mode
- * Headplane's raw editor has.
+ * raw editor has.
  */
 
 export type Slot = 'src' | 'acl-dst' | 'grant-dst' | 'via' | 'ip'

@@ -48,7 +48,6 @@ log:
   format: text
 
 # The whole reason this file exists. `file` mode makes PUT /api/v1/policy fail,
-# which is exactly the Headplane limitation Headboard is built to remove.
 policy:
   mode: database
 
