@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Device, type Me, type Role, type TailnetUser } from '../lib/api'
 import { Badge, Button, Empty, ErrorNote, Input, Mono, Section, Status } from '../components/ui'
@@ -9,6 +9,8 @@ import { KeyRound, ShieldCheck, UserPlus, Users } from 'lucide-react'
 import { expiryFromDays, isExpired } from '../lib/apiKeyControls'
 import { preAuthHardening } from '../lib/preAuthHardening'
 import { serverRegistrationCommand, type ServerRegistrationKind } from '../lib/serverRegistrationCommand'
+import { Link } from '../lib/router'
+import { devicesForOwner } from '../lib/ownerDevices'
 
 const roles: Role[] = ['owner', 'admin', 'network-admin', 'auditor', 'member']
 
@@ -19,8 +21,10 @@ export function People({ me }: { me: Me }) {
   const toast = useToast()
   const users = useQuery({ queryKey: ['tailnet-users'], queryFn: api.tailnetUsers })
   const accounts = useQuery({ queryKey: ['accounts'], queryFn: api.accounts })
+  const devices = useQuery({ queryKey: ['devices'], queryFn: api.devices })
 
   const [newUser, setNewUser] = useState('')
+  const [expandedUserID, setExpandedUserID] = useState<number | null>(null)
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['tailnet-users'] })
@@ -154,20 +158,43 @@ export function People({ me }: { me: Me }) {
             </SpanRow>
           ) : (
             users.data?.users.map((u) => (
-              <Row key={u.id}>
-                <Cell>
-                  <div className="font-medium">{u.name}</div>
-                  {u.email && <div className="text-xs text-muted-foreground">{u.email}</div>}
-                </Cell>
-                <Cell align="right">{u.devices}</Cell>
-                <Cell>
-                  {u.providerId ? (
-                    <Status ok label="matched automatically" />
-                  ) : (
-                    <Status ok={false} warn label="none — must be linked by hand" />
-                  )}
-                </Cell>
-              </Row>
+              <Fragment key={u.id}>
+                <Row>
+                  <Cell>
+                    <div className="font-medium">{u.name}</div>
+                    {u.email && <div className="text-xs text-muted-foreground">{u.email}</div>}
+                  </Cell>
+                  <Cell align="right">
+                    {u.devices > 0 ? (
+                      <Button
+                        variant="ghost"
+                        className="px-2 py-1"
+                        onClick={() => setExpandedUserID((id) => id === u.id ? null : u.id)}
+                        title={`Show devices owned by ${u.name}`}
+                      >
+                        {u.devices} device{u.devices === 1 ? '' : 's'}
+                      </Button>
+                    ) : u.devices}
+                  </Cell>
+                  <Cell>
+                    {u.providerId ? (
+                      <Status ok label="matched automatically" />
+                    ) : (
+                      <Status ok={false} warn label="none — must be linked by hand" />
+                    )}
+                  </Cell>
+                </Row>
+                {expandedUserID === u.id && (
+                  <SpanRow columns={3}>
+                    <OwnerDevices
+                      name={u.name}
+                      devices={devicesForOwner(devices.data?.devices ?? [], u.id)}
+                      pending={devices.isPending}
+                      error={devices.error}
+                    />
+                  </SpanRow>
+                )}
+              </Fragment>
             ))
           )}
         </Table>
@@ -179,6 +206,62 @@ export function People({ me }: { me: Me }) {
           </Button>
         </div>
       </Section>
+    </div>
+  )
+}
+
+function OwnerDevices({
+  name,
+  devices,
+  pending,
+  error,
+}: {
+  name: string
+  devices: Device[]
+  pending: boolean
+  error: unknown
+}) {
+  if (pending) {
+    return (
+      <Loading label={`Loading ${name}'s devices`}>
+        <SkeletonRows rows={2} cols={3} />
+      </Loading>
+    )
+  }
+  if (error) return <ErrorNote error={error} />
+
+  return (
+    <div className="space-y-3 text-left">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          Devices owned by <span className="font-medium text-foreground">{name}</span>
+        </p>
+        <Link to="/devices" className="text-sm font-medium text-accent-700 underline underline-offset-2 dark:text-accent-400">
+          View full inventory
+        </Link>
+      </div>
+      {devices.length === 0 ? (
+        <Empty icon={Users} title="No devices found" hint="The inventory changed while this view was open." />
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {devices.map((device) => (
+            <article key={device.id} className="rounded-lg border border-border bg-surface-0 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium">{device.name}</p>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {device.tags?.map((tag) => <Badge key={tag} tone="accent">{tag}</Badge>)}
+                  </div>
+                </div>
+                <Status ok={device.online} label={device.online ? 'online' : 'offline'} />
+              </div>
+              <div className="mt-3 flex flex-wrap gap-1">
+                {device.ips.map((ip) => <Mono key={ip} value={ip} />)}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

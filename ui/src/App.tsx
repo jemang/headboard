@@ -97,7 +97,11 @@ function Shell() {
           )}
           {path === '/account' && <Account me={user} />}
           {(path === '/' || path === '/devices') && (
-            <Devices me={user} focus={focusDevice} onFocused={() => setFocusDevice(null)} />
+            <Devices
+              me={user}
+              focus={focusDevice}
+              onFocused={() => setFocusDevice(null)}
+            />
           )}
           {!known.includes(path) && <p className="text-sm text-muted-foreground">Nothing here.</p>}
         </div>

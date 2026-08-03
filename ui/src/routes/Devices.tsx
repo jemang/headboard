@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Device, type EffectiveRule, type Me } from '../lib/api'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { api, type Device, type DeviceRules, type EffectiveRule, type Me } from '../lib/api'
 import { Badge, Button, Confirm, Drawer, Empty, ErrorNote, Input, Mono, Section, Status } from '../components/ui'
 import { Cell, Row, SpanRow, Table } from '../components/Table'
 import { Loading, Skeleton, SkeletonRows } from '../components/Skeleton'
 import { useToast } from '../components/Toast'
 import { devicePulse } from '../lib/devicePulse'
+import { accessibleDevices, ownedDevices, type AccessibleDevice } from '../lib/deviceAccess'
 import { approveRoutes, revokeRoutes, routeSummary } from '../lib/deviceRouting'
 import { Laptop, Search, Trash2, Pencil, TimerReset, Check, X } from 'lucide-react'
 
@@ -35,10 +36,24 @@ export function Devices({
   const devices = useQuery({ queryKey: ['devices'], queryFn: api.devices })
 
   const admin = me.capabilities.includes('view:all')
-  const pulse = devicePulse(devices.data?.devices ?? [])
+  const all = devices.data?.devices ?? []
+  const mine = useMemo(() => ownedDevices(all), [all])
+  const policyQueries = useQueries({
+    queries: !admin && me.linked
+      ? mine.map((device) => ({ queryKey: ['device-rules', device.id], queryFn: () => api.deviceRules(device.id) }))
+      : [],
+  })
+  const policyByDevice = useMemo(() => {
+    const rules = new Map<number, DeviceRules>()
+    for (const [index, query] of policyQueries.entries()) {
+      if (query.data && mine[index]) rules.set(mine[index].id, query.data)
+    }
+    return rules
+  }, [mine, policyQueries])
+  const accessible = useMemo(() => accessibleDevices(mine, policyByDevice), [mine, policyByDevice])
+  const pulse = devicePulse(admin ? all : mine)
 
   const rows = useMemo(() => {
-    const all = devices.data?.devices ?? []
     const q = filter.toLowerCase()
 
     return all.filter((d) => {
@@ -52,7 +67,24 @@ export function Devices({
         d.ips.some((ip) => ip.includes(q))
       )
     })
-  }, [devices.data, filter, onlineOnly])
+  }, [all, filter, onlineOnly])
+
+  const accessibleRows = useMemo(() => {
+    const q = filter.toLowerCase()
+    return accessible.filter((device) => {
+      if (onlineOnly && !device.online) return false
+      if (q === '') return true
+
+      return (
+        device.name.toLowerCase().includes(q) ||
+        (device.owner ?? '').toLowerCase().includes(q) ||
+        device.ips.some((ip) => ip.includes(q)) ||
+        device.sources.some((source) => source.toLowerCase().includes(q))
+      )
+    })
+  }, [accessible, filter, onlineOnly])
+  const policyError = policyQueries.find((query) => query.error)?.error
+  const policyPending = policyQueries.some((query) => query.isPending)
 
   if (devices.error) return <ErrorNote error={devices.error} />
 
@@ -61,11 +93,11 @@ export function Devices({
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Tailnet inventory</p>
-          <h1 className="mt-1 text-display font-semibold">{admin ? 'Devices' : 'My devices'}</h1>
+          <h1 className="mt-1 text-display font-semibold">Devices</h1>
           <p className="text-sm text-muted-foreground">
             {admin
               ? 'Every machine in the tailnet.'
-              : 'Your machines, and the rules that actually apply to them.'}
+              : 'The machines you own and the tailnet devices they can reach.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -97,74 +129,149 @@ export function Devices({
 
       {devices.data && <NetworkPulse total={pulse.total} online={pulse.online} offline={pulse.offline} expired={pulse.expired} />}
 
-      <Table
-        columns={['Device', 'Addresses', 'Owner', 'Status', 'Routes']}
-      >
-        {devices.isPending ? (
-          <SpanRow columns={5}>
-            <Loading label="Loading devices">
-              <SkeletonRows rows={4} cols={5} />
-            </Loading>
-          </SpanRow>
-        ) : rows.length === 0 ? (
-          <SpanRow columns={5}>
-            <Empty
-              icon={Laptop}
-              title="No devices"
-              hint={
-                filter || onlineOnly
-                  ? 'Nothing matches the current filter.'
-                  : 'Enrol one from the Keys page to see it here.'
-              }
+      {admin ? (
+        <DeviceTable
+          rows={rows}
+          pending={devices.isPending}
+          filtered={Boolean(filter || onlineOnly)}
+          onSelect={setSelected}
+        />
+      ) : (
+        <>
+          <Section title="My devices" actions={<span className="text-xs text-muted-foreground">machines owned by you</span>}>
+            <DeviceTable
+              rows={rows.filter((device) => device.mine)}
+              pending={devices.isPending}
+              filtered={Boolean(filter || onlineOnly)}
+              onSelect={setSelected}
             />
-          </SpanRow>
-        ) : (
-          rows.map((d) => (
-            <Row key={d.id} onClick={() => setSelected(d.id)} label={`Open ${d.name}`}>
-              <Cell>
-                <div className="font-medium">{d.name}</div>
-                {(d.tags ?? []).length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {d.tags?.map((t) => (
-                      <Badge key={t} tone="accent">
-                        {t}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-              </Cell>
-              <Cell>
-                <div className="flex flex-col gap-0.5">
-                  {d.ips.map((ip) => (
-                    <Mono key={ip} value={ip} />
-                  ))}
-                </div>
-              </Cell>
-              <Cell muted>{d.owner ?? <span className="text-xs">tagged</span>}</Cell>
-              <Cell>
-                <div className="flex flex-col gap-1">
-                  <Status ok={d.online} label={d.online ? 'online' : 'offline'} />
-                  {d.expired && <Status ok={false} warn label="key expired" />}
-                </div>
-              </Cell>
-              <Cell>
-                <div className="flex flex-wrap gap-1">
-                  {d.exitNode && <Badge tone="accent">exit node</Badge>}
-                  {(d.subnetRoutes ?? []).map((r) => (
-                    <Badge key={r}>{r}</Badge>
-                  ))}
-                  {(d.advertisedRoutes ?? []).filter(
-                    (r) => !(d.approvedRoutes ?? []).includes(r),
-                  ).length > 0 && <Badge tone="warn">awaiting approval</Badge>}
-                </div>
-              </Cell>
-            </Row>
-          ))
-        )}
-      </Table>
+          </Section>
+          <Section title="Devices I can access" actions={<span className="text-xs text-muted-foreground">based on active Grants</span>}>
+            {policyError ? (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">The live access view is unavailable because policy evaluation failed.</p>
+                <ErrorNote error={policyError} />
+              </div>
+            ) : (
+              <AccessibleDeviceTable
+                rows={accessibleRows}
+                pending={devices.isPending || policyPending}
+                filtered={Boolean(filter || onlineOnly)}
+                hasOwnedDevices={mine.length > 0}
+              />
+            )}
+          </Section>
+        </>
+      )}
 
       <DeviceDrawer id={selected} me={me} onClose={() => setSelected(null)} />
     </div>
+  )
+}
+
+function DeviceTable({
+  rows,
+  pending,
+  filtered,
+  onSelect,
+}: {
+  rows: Device[]
+  pending: boolean
+  filtered: boolean
+  onSelect: (id: number) => void
+}) {
+  return (
+    <Table columns={['Device', 'Addresses', 'Owner', 'Status', 'Routes']}>
+      {pending ? (
+        <SpanRow columns={5}>
+          <Loading label="Loading devices">
+            <SkeletonRows rows={4} cols={5} />
+          </Loading>
+        </SpanRow>
+      ) : rows.length === 0 ? (
+        <SpanRow columns={5}>
+          <Empty
+            icon={Laptop}
+            title="No devices"
+            hint={filtered ? 'Nothing matches the current filter.' : 'Enrol one from the Keys page to see it here.'}
+          />
+        </SpanRow>
+      ) : rows.map((d) => (
+        <Row key={d.id} onClick={() => onSelect(d.id)} label={`Open ${d.name}`}>
+          <Cell>
+            <div className="font-medium">{d.name}</div>
+            {(d.tags ?? []).length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {d.tags?.map((t) => <Badge key={t} tone="accent">{t}</Badge>)}
+              </div>
+            )}
+          </Cell>
+          <Cell>
+            <div className="flex flex-col gap-0.5">{d.ips.map((ip) => <Mono key={ip} value={ip} />)}</div>
+          </Cell>
+          <Cell muted>{d.owner ?? <span className="text-xs">tagged</span>}</Cell>
+          <Cell>
+            <div className="flex flex-col gap-1">
+              <Status ok={d.online} label={d.online ? 'online' : 'offline'} />
+              {d.expired && <Status ok={false} warn label="key expired" />}
+            </div>
+          </Cell>
+          <Cell>
+            <div className="flex flex-wrap gap-1">
+              {d.exitNode && <Badge tone="accent">exit node</Badge>}
+              {(d.subnetRoutes ?? []).map((r) => <Badge key={r}>{r}</Badge>)}
+              {(d.advertisedRoutes ?? []).filter((r) => !(d.approvedRoutes ?? []).includes(r)).length > 0 && <Badge tone="warn">awaiting approval</Badge>}
+            </div>
+          </Cell>
+        </Row>
+      ))}
+    </Table>
+  )
+}
+
+function AccessibleDeviceTable({
+  rows,
+  pending,
+  filtered,
+  hasOwnedDevices,
+}: {
+  rows: AccessibleDevice[]
+  pending: boolean
+  filtered: boolean
+  hasOwnedDevices: boolean
+}) {
+  return (
+    <Table columns={['Device', 'Owner', 'Addresses', 'Status', 'Accessible from']}>
+      {pending ? (
+        <SpanRow columns={5}>
+          <Loading label="Calculating device access">
+            <SkeletonRows rows={3} cols={5} />
+          </Loading>
+        </SpanRow>
+      ) : rows.length === 0 ? (
+        <SpanRow columns={5}>
+          <Empty
+            icon={Laptop}
+            title="No accessible devices"
+            hint={filtered ? 'Nothing matches the current filter.' : hasOwnedDevices ? 'The active Grants do not expose other tailnet devices.' : 'Enrol a device to see what it can access.'}
+          />
+        </SpanRow>
+      ) : rows.map((d) => (
+        <Row key={d.id}>
+          <Cell>
+            <div className="font-medium">{d.name}</div>
+          </Cell>
+          <Cell muted>{d.owner ?? <span className="text-xs">tagged</span>}</Cell>
+          <Cell>
+            <div className="flex flex-col gap-0.5">{d.ips.map((ip) => <Mono key={ip} value={ip} />)}</div>
+          </Cell>
+          <Cell>
+            <Status ok={d.online} label={d.online ? 'online' : 'offline'} />
+          </Cell>
+          <Cell muted>{d.sources.join(', ')}</Cell>
+        </Row>
+      ))}
+    </Table>
   )
 }
 
