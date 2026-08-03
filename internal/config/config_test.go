@@ -38,6 +38,22 @@ func TestDevUIProxyAllowsExplicitEmptyOverride(t *testing.T) {
 	}
 }
 
+func TestLoadPreservesOIDCIssuerTrailingSlash(t *testing.T) {
+	t.Setenv("HEADSCALE_URL", "https://headscale.example")
+	t.Setenv("HEADSCALE_API_KEY", "test-key")
+	t.Setenv("HEADBOARD_PUBLIC_URL", "https://headboard.example")
+	t.Setenv("OIDC_ISSUER", "https://auth.example/application/o/headscale/")
+	t.Setenv("OIDC_CLIENT_ID", "headboard")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got, want := cfg.OIDCIssuer, "https://auth.example/application/o/headscale/"; got != want {
+		t.Fatalf("OIDCIssuer = %q, want %q", got, want)
+	}
+}
+
 // A deployment behind a proxy at /manage has to say so in HEADBOARD_PUBLIC_URL
 // anyway, because the OIDC redirect is derived from it. BasePath reads it back
 // out rather than adding a second variable that could disagree.

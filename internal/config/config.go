@@ -131,7 +131,7 @@ func Load() (Config, error) {
 		AdminEmail:       env("HEADBOARD_ADMIN_EMAIL", "admin@headboard.local"),
 		AdminReset:       envBool("HEADBOARD_ADMIN_RESET", false),
 		PublicURL:        strings.TrimRight(env("HEADBOARD_PUBLIC_URL", "http://127.0.0.1:3000"), "/"),
-		OIDCIssuer:       strings.TrimRight(os.Getenv("OIDC_ISSUER"), "/"),
+		OIDCIssuer:       os.Getenv("OIDC_ISSUER"),
 		OIDCClientID:     os.Getenv("OIDC_CLIENT_ID"),
 		OIDCClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
 		Dev:              envBool("HEADBOARD_DEV", false),
