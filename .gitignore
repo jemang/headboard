@@ -10,6 +10,7 @@ node_modules/
 .env
 .env.local
 /dev/.env.dev
+/dev/mockoidc/mockoidc
 
 # Headboard's own store, including the WAL sidecars
 *.db

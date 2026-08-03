@@ -1,0 +1,94 @@
+// Seed policy for the throwaway Headscale.
+//
+// Deliberately comment-heavy and irregularly formatted: this doubles as the
+// fixture for T8's comment-preservation test. Patching one rule through
+// hujson must leave every comment below byte-identical.
+{
+  // Who is allowed to claim which tag. Policy v2 spells users with a
+  // trailing "@".
+  "tagOwners": {
+    "tag:prod": ["ops@"],
+    "tag:ci":   ["ops@"],
+  },
+
+  "groups": {
+    "group:eng": ["alice@", "bob@"],
+    "group:ops": ["ops@"],
+  },
+
+  "hosts": {
+    "office-lan": "10.0.0.0/24",
+  },
+
+  "acls": [
+    // Engineers reach production over HTTPS only.
+    {
+      "action": "accept",
+      "src":    ["group:eng"],
+      "dst":    ["tag:prod:443"],
+    },
+
+    // Ops gets SSH to everything it owns.
+    {
+      "action": "accept",
+      "src":    ["group:ops"],
+      "dst":    ["tag:prod:22", "tag:ci:22"],
+    },
+
+    // Everyone reaches their own devices. This is the rule the member
+    // portal's "what this device can reach" tab should surface first.
+    {
+      "action": "accept",
+      "src":    ["autogroup:member"],
+      "dst":    ["autogroup:self:*"],
+    },
+
+    // The office subnet, reachable through the ops gateway.
+    {
+      "action": "accept",
+      "src":    ["group:eng"],
+      "dst":    ["office-lan:*"],
+    },
+  ],
+
+  // Routes the gateway may advertise without an admin clicking approve.
+  "autoApprovers": {
+    "routes": {
+      "10.0.0.0/24": ["tag:prod"],
+    },
+    "exitNode": ["tag:prod"],
+  },
+
+  "ssh": [
+    {
+      "action": "accept",
+      "src":    ["group:ops"],
+      "dst":    ["tag:prod"],
+      "users":  ["root", "ubuntu"],
+    },
+  ],
+
+  // What must stay true. Headscale runs this block on every policy write and
+  // refuses the write when an assertion fails, so a stored policy can never
+  // contain a failing test — only a draft can. That is what the Tests tab is
+  // for: run them before saving, and find out which line is wrong.
+  "tests": [
+    {
+      "src":    "alice@",
+      "accept": ["tag:prod:443"],
+      "deny":   ["tag:prod:22"],
+    },
+    {
+      "src":    "ops@",
+      "accept": ["tag:prod:22", "tag:ci:22"],
+    },
+  ],
+
+  "sshTests": [
+    {
+      "src":    "ops@",
+      "dst":    ["tag:prod"],
+      "accept": ["root", "ubuntu"],
+    },
+  ],
+}

@@ -1,0 +1,64 @@
+# Throwaway Headscale for Headboard development.
+#
+# NOT a production config. It exists so we never point the dev loop at a real
+# tailnet. Everything here is disposable — `dev/down.sh` deletes the volume.
+
+server_url: http://127.0.0.1:8080
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 0.0.0.0:9090
+grpc_listen_addr: 0.0.0.0:50443
+grpc_allow_insecure: false
+
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+  allocation: sequential
+
+# No real DERP. Seeded nodes come from `headscale debug create-node`, so no
+# Tailscale client ever connects. Headscale still refuses to start on an empty
+# DERPMap, so derp.yaml supplies one unroutable placeholder region — that keeps
+# us from fetching controlplane.tailscale.com's map on every start.
+derp:
+  server:
+    enabled: false
+  urls: []
+  paths:
+    - /etc/headscale/derp.yaml
+  auto_update_enabled: false
+  update_frequency: 24h
+
+disable_check_updates: true
+
+node:
+  expiry: 0
+  ephemeral:
+    inactivity_timeout: 30m
+
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+    write_ahead_log: true
+
+log:
+  level: info
+  format: text
+
+# The whole reason this file exists. `file` mode makes PUT /api/v1/policy fail,
+# which is exactly the Headplane limitation Headboard is built to remove.
+policy:
+  mode: database
+
+dns:
+  magic_dns: true
+  base_domain: headboard.test
+  override_local_dns: false
+  nameservers:
+    global:
+      - 1.1.1.1
+
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"

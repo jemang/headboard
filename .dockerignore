@@ -1,0 +1,42 @@
+# The build context is uploaded to the daemon on every build, so anything the
+# image cannot use is pure latency — node_modules alone is 192 MB.
+#
+# It is also a containment boundary: a secret that never enters the context
+# cannot be copied into a layer by a careless COPY.
+
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+dev/.env.dev
+
+# Built by the ui stage inside the image; a host build would shadow it.
+ui/node_modules
+ui/dist
+
+# Local tooling and working notes.
+.claude
+.codegraph
+.doc
+.superpowers
+.tool-versions
+docs
+spike
+handoff.md
+todo.txt
+*.md
+!README.md
+
+# Compose files describe how to *run* the image, not how to build it.
+compose.yaml
+compose.dev.yaml
+dev
+
+# Screenshots and sample data.
+*.png
+sample-acl.json
+
+# Test binaries and coverage output.
+*.test
+*.out

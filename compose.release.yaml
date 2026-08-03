@@ -1,0 +1,74 @@
+# Runs a published Headboard release against an existing Headscale.
+#
+#   cp .env.example .env     # fill in the four values below
+#   docker compose -f compose.release.yaml up -d
+#   docker compose -f compose.release.yaml logs headboard | grep -A3 'Owner account'
+#
+# compose.yaml builds from this checkout; this file pulls a tagged image and is
+# the one to deploy. Upgrading is a tag bump plus `up -d`.
+services:
+  headboard:
+    # Pinned on purpose. `latest` makes a restart an unplanned upgrade, and
+    # the whole point of a tag is being able to go back to it.
+    # image: ghcr.io/jemang/headboard:${HEADBOARD_VERSION:-0.2.0}
+    image: ghcr.io/jemang/headboard:${HEADBOARD_VERSION:-0.2.0}
+    pull_policy: always
+
+    # Read from .env, so the Headscale admin key never sits in a file that
+    # tracks in git. It is an all-access credential for the tailnet.
+    env_file: .env
+
+    environment:
+      HEADSCALE_URL: ${HEADSCALE_URL:?set HEADSCALE_URL in .env}
+      HEADSCALE_API_KEY: ${HEADSCALE_API_KEY:?set HEADSCALE_API_KEY in .env}
+      # Where browsers reach Headboard. Must be https: session cookies are
+      # Secure outside HEADBOARD_DEV. The OIDC redirect, if you add one, is
+      # <HEADBOARD_PUBLIC_URL>/auth/callback.
+      HEADBOARD_PUBLIC_URL: ${HEADBOARD_PUBLIC_URL:?set HEADBOARD_PUBLIC_URL in .env}
+      HEADBOARD_POLL_INTERVAL: ${HEADBOARD_POLL_INTERVAL:-5s}
+      HEADBOARD_SESSION_LIFETIME: ${HEADBOARD_SESSION_LIFETIME:-12h}
+      HEADBOARD_ADMIN_EMAIL: ${HEADBOARD_ADMIN_EMAIL:-admin@headboard.local}
+      # One boot with this at 1 mints a new owner password and prints it —
+      # the way back in when the password or the identity provider is lost.
+      HEADBOARD_ADMIN_RESET: ${HEADBOARD_ADMIN_RESET:-false}
+      # Use the SAME issuer as Headscale, or accounts match no Headscale user.
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+
+    # Bound to loopback because HEADBOARD_PUBLIC_URL has to be https and TLS
+    # belongs to whatever proxy already fronts this host. Publish it wider only
+    # if that proxy runs elsewhere.
+    ports:
+      - '3001:3000'
+
+    # Accounts, sessions, the audit log and policy history. Lose it and the
+    # next start is a first run: new owner password, empty audit trail. The
+    # tailnet itself is untouched — Headscale stays the source of truth.
+    volumes:
+      - headboard-data:/data
+
+    restart: unless-stopped
+
+    # The binary is static and writes only to /data, so nothing else needs to
+    # be writable. SQLite still wants a scratch directory.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # The image already declares a HEALTHCHECK against /api/health, which
+    # reports Headscale connectivity rather than just process liveness.
+    # `docker compose ps` shows it; nothing here needs to repeat it.
+
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+volumes:
+  headboard-data:
