@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/juanfont/headscale/hscontrol/types"
 
 	"github.com/jemang/headboard/internal/auth"
 )
@@ -55,6 +57,22 @@ type renameUserInput struct {
 
 type userOutput struct {
 	Body TailnetUser
+}
+
+// duplicateUserName reports whether any user already has the given name,
+// case-insensitively. Headscale itself permits two users to share a name once
+// one has an OIDC provider identifier (the unique index is on Name+
+// ProviderIdentifier together, not Name alone) — but a name Headboard's own
+// "create user" action introduces has no such identifier, so it can only ever
+// collide, leaving an ambiguous "name@" token for policy to resolve.
+func duplicateUserName(users []types.User, name string) bool {
+	for _, u := range users {
+		if strings.EqualFold(u.Name, name) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func init() {
@@ -132,6 +150,17 @@ func init() {
 			p, err := require(ctx, auth.CapManageUsers)
 			if err != nil {
 				return nil, err
+			}
+
+			snap, err := currentSnapshot(deps)
+			if err != nil {
+				return nil, err
+			}
+
+			if duplicateUserName(snap.Users, in.Body.Name) {
+				return nil, huma.Error409Conflict(
+					"a Headscale user named " + in.Body.Name + " already exists; " +
+						"pick a different name or link the existing one from the accounts table")
 			}
 
 			user, err := deps.Mutator.CreateUser(ctx, in.Body.Name, in.Body.DisplayName, in.Body.Email)

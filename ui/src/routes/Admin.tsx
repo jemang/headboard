@@ -1,16 +1,17 @@
 import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Device, type Me, type Role, type TailnetUser } from '../lib/api'
-import { Badge, Button, Empty, ErrorNote, Input, Mono, Section, Status } from '../components/ui'
+import { Badge, Button, Confirm, Empty, ErrorNote, Input, Mono, Section, Status } from '../components/ui'
 import { Cell, Row, SpanRow, Table } from '../components/Table'
 import { Loading, SkeletonRows } from '../components/Skeleton'
 import { useToast } from '../components/Toast'
-import { KeyRound, ShieldCheck, UserPlus, Users } from 'lucide-react'
+import { KeyRound, ShieldCheck, Trash2, UserPlus, Users } from 'lucide-react'
 import { expiryFromDays, isExpired } from '../lib/apiKeyControls'
 import { preAuthHardening } from '../lib/preAuthHardening'
 import { serverRegistrationCommand, type ServerRegistrationKind } from '../lib/serverRegistrationCommand'
 import { Link } from '../lib/router'
 import { devicesForOwner } from '../lib/ownerDevices'
+import { duplicateUserNames } from '../lib/duplicateUserNames'
 
 const roles: Role[] = ['owner', 'admin', 'network-admin', 'auditor', 'member']
 
@@ -25,6 +26,7 @@ export function People({ me }: { me: Me }) {
 
   const [newUser, setNewUser] = useState('')
   const [expandedUserID, setExpandedUserID] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<TailnetUser | null>(null)
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['tailnet-users'] })
@@ -37,6 +39,16 @@ export function People({ me }: { me: Me }) {
       setNewUser('')
       invalidate()
       toast.ok(`Created ${u.name}`)
+    },
+    onError: toast.error,
+  })
+
+  const remove = useMutation({
+    mutationFn: (id: number) => api.deleteTailnetUser(id),
+    onSuccess: () => {
+      invalidate()
+      toast.ok(`Deleted ${deleteTarget?.name ?? 'user'}`)
+      setDeleteTarget(null)
     },
     onError: toast.error,
   })
@@ -65,6 +77,8 @@ export function People({ me }: { me: Me }) {
   })
 
   if (users.error) return <ErrorNote error={users.error} />
+
+  const duplicateNames = duplicateUserNames(users.data?.users ?? [])
 
   return (
     <div className="space-y-6">
@@ -149,11 +163,11 @@ export function People({ me }: { me: Me }) {
       </Section>
 
       <Section title="Headscale users" actions={<span className="text-xs text-muted-foreground">who owns devices</span>}>
-        <Table columns={['User', { label: 'Devices', align: 'right' }, 'OIDC identity']}>
+        <Table columns={['User', { label: 'Devices', align: 'right' }, 'OIDC identity', '']}>
           {users.isPending ? (
-            <SpanRow columns={3}>
+            <SpanRow columns={4}>
               <Loading label="Loading users">
-                <SkeletonRows rows={3} cols={3} />
+                <SkeletonRows rows={3} cols={4} />
               </Loading>
             </SpanRow>
           ) : (
@@ -161,7 +175,12 @@ export function People({ me }: { me: Me }) {
               <Fragment key={u.id}>
                 <Row>
                   <Cell>
-                    <div className="font-medium">{u.name}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-medium">{u.name}</div>
+                      {duplicateNames.has(u.name.toLowerCase()) && (
+                        <Badge tone="danger">duplicate name</Badge>
+                      )}
+                    </div>
                     {u.email && <div className="text-xs text-muted-foreground">{u.email}</div>}
                   </Cell>
                   <Cell align="right">
@@ -183,9 +202,21 @@ export function People({ me }: { me: Me }) {
                       <Status ok={false} warn label="none — must be linked by hand" />
                     )}
                   </Cell>
+                  <Cell align="right">
+                    <Button
+                      variant="ghost"
+                      icon={Trash2}
+                      className="px-2 py-1"
+                      disabled={u.devices > 0}
+                      title={u.devices > 0 ? `${u.name} still owns devices; remove or reassign them first` : `Delete ${u.name}`}
+                      onClick={() => setDeleteTarget(u)}
+                    >
+                      Delete
+                    </Button>
+                  </Cell>
                 </Row>
                 {expandedUserID === u.id && (
-                  <SpanRow columns={3}>
+                  <SpanRow columns={4}>
                     <OwnerDevices
                       name={u.name}
                       devices={devicesForOwner(devices.data?.devices ?? [], u.id)}
@@ -206,6 +237,20 @@ export function People({ me }: { me: Me }) {
           </Button>
         </div>
       </Section>
+
+      <Confirm
+        open={deleteTarget !== null}
+        title={`Delete ${deleteTarget?.name ?? 'this user'}?`}
+        body={
+          <>
+            <span className="font-mono">{deleteTarget?.name}</span> will be removed from Headscale.
+            This only works while they own no devices.
+          </>
+        }
+        confirmLabel="Delete user"
+        onConfirm={() => deleteTarget && remove.mutate(deleteTarget.id)}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }
