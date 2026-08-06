@@ -454,7 +454,14 @@ function MapListTab({
   const prefix = section === 'groups' ? 'group:' : 'tag:'
 
   return (
-    <Section title={section}>
+    <Section
+      title={section}
+      actions={section === 'tagOwners' ? (
+        <span className="text-xs text-muted-foreground">
+          who may claim a tag — devices get tagged from Devices, not here
+        </span>
+      ) : undefined}
+    >
       {entries.length === 0 && <Empty title={`No ${section} defined`} />}
 
       <ul className="space-y-2">

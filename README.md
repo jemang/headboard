@@ -233,6 +233,16 @@ provider accepts several redirect URIs), or set both providers to the same *issu
 > included. The old rows remain but can no longer be reached. Recovery is
 > `HEADBOARD_ADMIN_RESET=1`, which is exactly why the local owner exists.
 
+> **A CLI-seeded Headscale user and an OIDC login are still different users, even with the same
+> name.** Headscale matches a login by `provider_identifier`, not by name, and a name created with
+> `headscale users create` never has one. If someone's username collides with an existing CLI-seeded
+> user, Headscale's own OIDC handler creates a *second* row with that name rather than matching the
+> first — Headscale allows this (its uniqueness is on name **and** `provider_identifier` together).
+> Two Headscale users sharing a name makes any policy rule written as `name@` ambiguous, and
+> Headscale refuses to compile the policy until it's resolved. Headboard flags the collision with a
+> "duplicate name" badge in *People* — delete the stray CLI-seeded row, or rename one of them, before
+> it breaks the policy.
+
 ### Roles
 
 | Role | Can |
@@ -283,8 +293,12 @@ For an existing deployment, complete this cutover deliberately:
   sees — computed by Headscale's engine, not an approximation.
 - **Simulator.** "Can A reach B on port N", answered against the destination's own filter (so
   `autogroup:self` rules count), with a link to the policy line responsible.
-- **The usual admin.** Devices, routes, users, manual device-registration approval, Headscale API
-  keys, and an audit log of every change.
+- **The usual admin.** Devices, routes, manual device-registration approval, Headscale API keys, and
+  an audit log of every change. Users open into a drawer to rename, delete (refused while they own
+  devices), and link or unlink the Headboard account that signs in as them. Creating a user by hand
+  is blocked if the name collides with one that already exists.
+- **Device tags.** Assign or remove `tag:` values per device, suggested from the policy's own
+  `tagOwners`. One-way: Headscale will not let a tagged device go back to having an owner.
 
 Press <kbd>⌘K</kbd> for pages and devices.
 

@@ -347,6 +347,8 @@ export const api = {
   tailnetUsers: () => request<{ users: TailnetUser[] }>('/api/users'),
   createTailnetUser: (body: { name: string; displayName?: string; email?: string }) =>
     send<TailnetUser>('POST', '/api/users', body),
+  renameTailnetUser: (id: number, name: string) =>
+    send<TailnetUser>('POST', `/api/users/${id}/rename`, { name }),
   deleteTailnetUser: (id: number) => send<void>('DELETE', `/api/users/${id}`),
 
   accounts: () => request<{ accounts: Account[] }>('/api/accounts'),

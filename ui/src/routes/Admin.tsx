@@ -1,11 +1,11 @@
-import { Fragment, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Device, type Me, type Role, type TailnetUser } from '../lib/api'
-import { Badge, Button, Confirm, Empty, ErrorNote, Input, Mono, Section, Status } from '../components/ui'
+import { api, type Account, type Device, type Me, type Role, type TailnetUser } from '../lib/api'
+import { Badge, Button, Confirm, Drawer, Empty, ErrorNote, Input, Mono, Section, Status } from '../components/ui'
 import { Cell, Row, SpanRow, Table } from '../components/Table'
 import { Loading, SkeletonRows } from '../components/Skeleton'
 import { useToast } from '../components/Toast'
-import { KeyRound, ShieldCheck, Trash2, UserPlus, Users } from 'lucide-react'
+import { Check, KeyRound, Pencil, ShieldCheck, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { expiryFromDays, isExpired } from '../lib/apiKeyControls'
 import { preAuthHardening } from '../lib/preAuthHardening'
 import { serverRegistrationCommand, type ServerRegistrationKind } from '../lib/serverRegistrationCommand'
@@ -25,7 +25,7 @@ export function People({ me }: { me: Me }) {
   const devices = useQuery({ queryKey: ['devices'], queryFn: api.devices })
 
   const [newUser, setNewUser] = useState('')
-  const [expandedUserID, setExpandedUserID] = useState<number | null>(null)
+  const [selectedUserID, setSelectedUserID] = useState<number | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<TailnetUser | null>(null)
 
   const invalidate = () => {
@@ -49,6 +49,16 @@ export function People({ me }: { me: Me }) {
       invalidate()
       toast.ok(`Deleted ${deleteTarget?.name ?? 'user'}`)
       setDeleteTarget(null)
+      setSelectedUserID(null)
+    },
+    onError: toast.error,
+  })
+
+  const renameUser = useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) => api.renameTailnetUser(id, name),
+    onSuccess: (u) => {
+      invalidate()
+      toast.ok(`Renamed to ${u.name}`)
     },
     onError: toast.error,
   })
@@ -163,69 +173,34 @@ export function People({ me }: { me: Me }) {
       </Section>
 
       <Section title="Headscale users" actions={<span className="text-xs text-muted-foreground">who owns devices</span>}>
-        <Table columns={['User', { label: 'Devices', align: 'right' }, 'OIDC identity', '']}>
+        <Table columns={['User', { label: 'Devices', align: 'right' }, 'OIDC identity']}>
           {users.isPending ? (
-            <SpanRow columns={4}>
+            <SpanRow columns={3}>
               <Loading label="Loading users">
-                <SkeletonRows rows={3} cols={4} />
+                <SkeletonRows rows={3} cols={3} />
               </Loading>
             </SpanRow>
           ) : (
             users.data?.users.map((u) => (
-              <Fragment key={u.id}>
-                <Row>
-                  <Cell>
-                    <div className="flex items-center gap-2">
-                      <div className="font-medium">{u.name}</div>
-                      {duplicateNames.has(u.name.toLowerCase()) && (
-                        <Badge tone="danger">duplicate name</Badge>
-                      )}
-                    </div>
-                    {u.email && <div className="text-xs text-muted-foreground">{u.email}</div>}
-                  </Cell>
-                  <Cell align="right">
-                    {u.devices > 0 ? (
-                      <Button
-                        variant="ghost"
-                        className="px-2 py-1"
-                        onClick={() => setExpandedUserID((id) => id === u.id ? null : u.id)}
-                        title={`Show devices owned by ${u.name}`}
-                      >
-                        {u.devices} device{u.devices === 1 ? '' : 's'}
-                      </Button>
-                    ) : u.devices}
-                  </Cell>
-                  <Cell>
-                    {u.providerId ? (
-                      <Status ok label="matched automatically" />
-                    ) : (
-                      <Status ok={false} warn label="none — must be linked by hand" />
+              <Row key={u.id} onClick={() => setSelectedUserID(u.id)} label={`Open ${u.name}`}>
+                <Cell>
+                  <div className="flex items-center gap-2">
+                    <div className="font-medium">{u.name}</div>
+                    {duplicateNames.has(u.name.toLowerCase()) && (
+                      <Badge tone="danger">duplicate name</Badge>
                     )}
-                  </Cell>
-                  <Cell align="right">
-                    <Button
-                      variant="ghost"
-                      icon={Trash2}
-                      className="px-2 py-1"
-                      disabled={u.devices > 0}
-                      title={u.devices > 0 ? `${u.name} still owns devices; remove or reassign them first` : `Delete ${u.name}`}
-                      onClick={() => setDeleteTarget(u)}
-                    >
-                      Delete
-                    </Button>
-                  </Cell>
-                </Row>
-                {expandedUserID === u.id && (
-                  <SpanRow columns={4}>
-                    <OwnerDevices
-                      name={u.name}
-                      devices={devicesForOwner(devices.data?.devices ?? [], u.id)}
-                      pending={devices.isPending}
-                      error={devices.error}
-                    />
-                  </SpanRow>
-                )}
-              </Fragment>
+                  </div>
+                  {u.email && <div className="text-xs text-muted-foreground">{u.email}</div>}
+                </Cell>
+                <Cell align="right">{u.devices}</Cell>
+                <Cell>
+                  {u.providerId ? (
+                    <Status ok label="matched automatically" />
+                  ) : (
+                    <Status ok={false} warn label="none — must be linked by hand" />
+                  )}
+                </Cell>
+              </Row>
             ))
           )}
         </Table>
@@ -237,6 +212,22 @@ export function People({ me }: { me: Me }) {
           </Button>
         </div>
       </Section>
+
+      <UserDrawer
+        user={users.data?.users.find((u) => u.id === selectedUserID)}
+        duplicateName={selectedUserID !== null && duplicateNames.has(
+          (users.data?.users.find((u) => u.id === selectedUserID)?.name ?? '').toLowerCase(),
+        )}
+        linkedAccount={accounts.data?.accounts.find((a) => a.headscaleUserId === selectedUserID)}
+        accounts={accounts.data?.accounts ?? []}
+        devices={devicesForOwner(devices.data?.devices ?? [], selectedUserID ?? -1)}
+        devicesPending={devices.isPending}
+        devicesError={devices.error}
+        rename={renameUser}
+        link={link}
+        onDelete={(u) => setDeleteTarget(u)}
+        onClose={() => setSelectedUserID(null)}
+      />
 
       <Confirm
         open={deleteTarget !== null}
@@ -251,6 +242,134 @@ export function People({ me }: { me: Me }) {
         onConfirm={() => deleteTarget && remove.mutate(deleteTarget.id)}
         onCancel={() => setDeleteTarget(null)}
       />
+    </div>
+  )
+}
+
+function UserDrawer({
+  user,
+  duplicateName,
+  linkedAccount,
+  accounts,
+  devices,
+  devicesPending,
+  devicesError,
+  rename,
+  link,
+  onDelete,
+  onClose,
+}: {
+  user: TailnetUser | undefined
+  duplicateName: boolean
+  linkedAccount: Account | undefined
+  accounts: Account[]
+  devices: Device[]
+  devicesPending: boolean
+  devicesError: unknown
+  rename: { mutate: (vars: { id: number; name: string }) => void }
+  link: { mutate: (vars: { id: number; hsID: number | null }) => void }
+  onDelete: (user: TailnetUser) => void
+  onClose: () => void
+}) {
+  const [renaming, setRenaming] = useState<string | null>(null)
+
+  return (
+    <Drawer
+      open={user !== undefined}
+      onClose={onClose}
+      title={user?.name ?? 'User'}
+      subtitle={user?.email && <span className="text-xs">{user.email}</span>}
+    >
+      {user && (
+        <div className="space-y-6">
+          <dl className="grid grid-cols-2 gap-3 text-sm">
+            <Field label="Name">
+              <span className="flex items-center gap-2">
+                {user.name}
+                {duplicateName && <Badge tone="danger">duplicate name</Badge>}
+              </span>
+            </Field>
+            <Field label="Display name">{user.displayName || '—'}</Field>
+            <Field label="Devices">{user.devices}</Field>
+            <Field label="OIDC identity">
+              {user.providerId ? (
+                <Status ok label="matched automatically" />
+              ) : (
+                <Status ok={false} warn label="none — must be linked by hand" />
+              )}
+            </Field>
+            <Field label="Linked Headboard account">
+              <select
+                value={linkedAccount?.id ?? ''}
+                onChange={(e) => {
+                  if (!user) return
+
+                  if (e.target.value === '') {
+                    if (linkedAccount) link.mutate({ id: linkedAccount.id, hsID: null })
+                  } else {
+                    link.mutate({ id: Number(e.target.value), hsID: user.id })
+                  }
+                }}
+                className="rounded-md border border-border bg-surface-1 px-2 py-1 text-sm"
+              >
+                <option value="">— not linked —</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.email} ({a.role})
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </dl>
+
+          <Section title="Actions">
+            <div className="flex flex-wrap gap-2">
+              {renaming === null ? (
+                <Button icon={Pencil} onClick={() => setRenaming(user.name)}>
+                  Rename
+                </Button>
+              ) : (
+                <div className="flex w-full gap-2">
+                  <Input value={renaming} onChange={setRenaming} autoFocus className="flex-1" />
+                  <Button
+                    variant="primary"
+                    icon={Check}
+                    onClick={() => { rename.mutate({ id: user.id, name: renaming }); setRenaming(null) }}
+                  >
+                    Save
+                  </Button>
+                  <Button variant="ghost" icon={X} onClick={() => setRenaming(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              )}
+
+              <Button
+                variant="danger"
+                icon={Trash2}
+                disabled={user.devices > 0}
+                title={user.devices > 0 ? `${user.name} still owns devices; remove or reassign them first` : undefined}
+                onClick={() => onDelete(user)}
+              >
+                Delete user
+              </Button>
+            </div>
+          </Section>
+
+          <Section title="Devices">
+            <OwnerDevices name={user.name} devices={devices} pending={devicesPending} error={devicesError} />
+          </Section>
+        </div>
+      )}
+    </Drawer>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5">{children}</dd>
     </div>
   )
 }

@@ -8,7 +8,8 @@ import { useToast } from '../components/Toast'
 import { devicePulse } from '../lib/devicePulse'
 import { accessibleDevices, ownedDevices, type AccessibleDevice } from '../lib/deviceAccess'
 import { approveRoutes, revokeRoutes, routeSummary } from '../lib/deviceRouting'
-import { Laptop, Search, Trash2, Pencil, TimerReset, Check, X } from 'lucide-react'
+import { Laptop, Search, Trash2, Pencil, TimerReset, Check, X, Tag } from 'lucide-react'
+import { cn } from '../lib/cn'
 
 export function Devices({
   me,
@@ -323,6 +324,15 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [exitAction, setExitAction] = useState<'approve' | 'revoke' | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
+  const [editingTags, setEditingTags] = useState<string[] | null>(null)
+  const [tagDraft, setTagDraft] = useState('')
+  const [tagSuggestionsOpen, setTagSuggestionsOpen] = useState(false)
+  const [confirmTags, setConfirmTags] = useState<string[] | null>(null)
+
+  // Same query the Access control page uses, so the suggestion list is the
+  // tagOwners actually declared in policy rather than freehand guessing.
+  const policy = useQuery({ queryKey: ['policy'], queryFn: api.policy })
+  const knownTags = policy.data?.tokens.tags ?? []
   const [tab, setTab] = useState<'inbound' | 'outbound' | 'peers'>('inbound')
 
   const device = useQuery({
@@ -349,6 +359,16 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
       setRenaming(null)
       invalidate()
       toast.ok(`Renamed to ${d.name}`)
+    },
+    onError: toast.error,
+  })
+
+  const setTags = useMutation({
+    mutationFn: (tags: string[]) => api.setDeviceTags(id as number, tags),
+    onSuccess: (updated) => {
+      setEditingTags(null)
+      invalidate()
+      toast.ok(updated.tags?.length ? `Tags set to ${updated.tags.join(', ')}` : 'Tags cleared')
     },
     onError: toast.error,
   })
@@ -438,6 +458,124 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
                       Cancel
                     </Button>
                   </div>
+                )}
+
+                {canManage && (
+                  editingTags === null ? (
+                    <Button icon={Tag} onClick={() => { setEditingTags(d.tags ?? []); setTagDraft('') }}>
+                      Edit tags
+                    </Button>
+                  ) : (
+                    <div className="flex w-full flex-col gap-2">
+                      <div className="relative flex flex-1 flex-wrap items-center gap-1 rounded-lg border border-border bg-surface-1 px-1.5 py-1 shadow-sm transition-colors focus-within:border-accent-500">
+                        {editingTags.map((tag) => {
+                          const valid = tag.startsWith('tag:') && knownTags.includes(tag)
+
+                          return (
+                            <span
+                              key={tag}
+                              className={cn(
+                                'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs',
+                                valid
+                                  ? 'bg-surface-2 text-foreground'
+                                  : 'bg-danger/15 text-danger ring-1 ring-danger/40',
+                              )}
+                              title={
+                                valid
+                                  ? undefined
+                                  : tag.startsWith('tag:')
+                                    ? `"${tag}" has no owner in tagOwners`
+                                    : 'tags must start with "tag:"'
+                              }
+                            >
+                              {tag}
+                              <button
+                                type="button"
+                                aria-label={`Remove ${tag}`}
+                                className="opacity-60 hover:opacity-100"
+                                onClick={() => setEditingTags(editingTags.filter((t) => t !== tag))}
+                              >
+                                ×
+                              </button>
+                            </span>
+                          )
+                        })}
+                        <input
+                          value={tagDraft}
+                          autoFocus
+                          placeholder={editingTags.length === 0 ? 'tag:prod' : ''}
+                          onChange={(e) => { setTagDraft(e.target.value); setTagSuggestionsOpen(true) }}
+                          onFocus={() => setTagSuggestionsOpen(true)}
+                          onBlur={() => setTimeout(() => setTagSuggestionsOpen(false), 120)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ',') {
+                              e.preventDefault()
+                              const t = tagDraft.trim()
+                              if (t && !editingTags.includes(t)) setEditingTags([...editingTags, t])
+                              setTagDraft('')
+                            }
+                            if (e.key === 'Backspace' && tagDraft === '' && editingTags.length > 0) {
+                              setEditingTags(editingTags.slice(0, -1))
+                            }
+                          }}
+                          className="min-w-24 flex-1 bg-transparent px-1 py-0.5 font-mono text-xs outline-none placeholder:text-muted-foreground"
+                        />
+
+                        {tagSuggestionsOpen && (() => {
+                          const q = tagDraft.toLowerCase()
+                          const suggestions = knownTags
+                            .filter((t) => t.toLowerCase().includes(q) && !editingTags.includes(t))
+                            .slice(0, 8)
+
+                          if (suggestions.length === 0) return null
+
+                          return (
+                            <ul className="absolute left-0 top-full z-20 mt-1 max-h-56 w-56 overflow-y-auto rounded-lg border border-border bg-surface-0 py-1 shadow-raised">
+                              {suggestions.map((s) => (
+                                <li key={s}>
+                                  <button
+                                    type="button"
+                                    className="block w-full px-2.5 py-1 text-left font-mono text-xs hover:bg-surface-2"
+                                    onMouseDown={(e) => {
+                                      e.preventDefault()
+                                      setEditingTags([...editingTags, s])
+                                      setTagDraft('')
+                                    }}
+                                  >
+                                    {s}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )
+                        })()}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="primary"
+                          icon={Check}
+                          onClick={() => {
+                            const draft = tagDraft.trim()
+                            const tags = draft && !editingTags.includes(draft) ? [...editingTags, draft] : editingTags
+                            if (d.owner && tags.length > 0) {
+                              setConfirmTags(tags)
+                            } else {
+                              setTags.mutate(tags)
+                            }
+                          }}
+                        >
+                          Save
+                        </Button>
+                        <Button variant="ghost" icon={X} onClick={() => setEditingTags(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Enter or comma to add a tag. Tags replace the owner — a tagged device has no
+                        owning user, and Headscale will not let a tagged device go back to having one.
+                      </p>
+                    </div>
+                  )
                 )}
 
                 {canManage && (
@@ -613,6 +751,23 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
           setExitAction(null)
         }}
         onCancel={() => setExitAction(null)}
+      />
+      <Confirm
+        open={confirmTags !== null}
+        title={`Tag ${d?.name ?? 'this device'}?`}
+        body={
+          <>
+            <span className="font-mono">{d?.owner}</span> will stop owning{' '}
+            <span className="font-mono">{d?.name}</span>. Headscale has no way to remove every tag
+            from a device once it has one, so this cannot be undone from here.
+          </>
+        }
+        confirmLabel="Set tags"
+        onConfirm={() => {
+          if (confirmTags) setTags.mutate(confirmTags)
+          setConfirmTags(null)
+        }}
+        onCancel={() => setConfirmTags(null)}
       />
     </Drawer>
   )
