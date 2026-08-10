@@ -1,4 +1,4 @@
-import type { AclRule, AclSchema, Grant, PatchOp } from './api'
+import type { AclRule, AclSchema, AclTest, Grant, PatchOp, SshRule, SshTest } from './api'
 
 /**
  * The API query is the last saved schema; form tabs also need to render the
@@ -11,6 +11,322 @@ export function schemaWithPendingChanges(schema: AclSchema | undefined, pending:
   for (const operation of pending) applySchemaOperation(draft as Record<string, unknown>, operation)
 
   return draft
+}
+
+type MapSection = 'groups' | 'tagOwners' | 'hosts'
+
+// newMapEntryPatch creates the top-level map when the stored policy does not
+// have it yet. RFC 6902 cannot add /groups/group:ops while /groups is absent.
+export function newMapEntryPatch(
+  schema: AclSchema | undefined,
+  pending: PatchOp[],
+  section: MapSection,
+  key: string,
+  value: string | string[],
+): PatchOp {
+  const projected = schemaWithPendingChanges(schema, pending)
+
+  if (projected[section] === undefined) {
+    return { op: 'add', path: `/${section}`, value: { [key]: value } }
+  }
+
+  return { op: 'add', path: `/${section}/${escapePointer(key)}`, value }
+}
+
+type DeletionTarget = { section: 'groups' | 'tagOwners'; name: string }
+
+export type CascadeResult = { ops: PatchOp[]; affected: number }
+
+/**
+ * cascadePolicyDeletion removes a group or tag together with the policy
+ * references that would otherwise make the document invalid. It projects the
+ * current staged patch queue first, then emits only section-level patches for
+ * the resulting cleanup so Preview and Save review the exact same document.
+ */
+export function cascadePolicyDeletion(
+  schema: AclSchema | undefined,
+  pending: PatchOp[],
+  target: DeletionTarget,
+): CascadeResult {
+  const projected = schemaWithPendingChanges(schema, pending)
+  const next = structuredClone(projected)
+  const removed = new Set<string>()
+  let affected = 0
+
+  const removeTarget = (current: DeletionTarget) => {
+    const identity = `${current.section}:${current.name}`
+    if (removed.has(identity)) return
+    removed.add(identity)
+
+    if (current.section === 'groups') {
+      if (next.groups?.[current.name] === undefined) return
+
+      delete next.groups[current.name]
+      affected++
+
+      for (const [tag, owners] of Object.entries(next.tagOwners ?? {})) {
+        if (!owners.includes(current.name)) continue
+
+        const remaining = owners.filter((owner) => owner !== current.name)
+        if (remaining.length === 0) removeTarget({ section: 'tagOwners', name: tag })
+        else {
+          next.tagOwners![tag] = remaining
+          affected++
+        }
+      }
+    } else {
+      if (next.tagOwners?.[current.name] === undefined) return
+
+      delete next.tagOwners[current.name]
+      affected++
+    }
+
+    cleanReferences(next, current, () => {
+      affected++
+    })
+  }
+
+  removeTarget(target)
+
+  return { ops: cascadeOperations(projected, next), affected }
+}
+
+function cleanReferences(schema: AclSchema, target: DeletionTarget, changed: () => void) {
+  schema.acls = cleanRules(schema.acls, target, changed)
+  schema.grants = cleanGrants(schema.grants, target, changed)
+  schema.ssh = cleanSSH(schema.ssh, target, changed)
+  schema.autoApprovers = cleanAutoApprovers(schema.autoApprovers, target, changed)
+  schema.tests = cleanTests(schema.tests, target, changed)
+  schema.sshTests = cleanSSHTests(schema.sshTests, target, changed)
+}
+
+function cleanRules(rules: AclRule[] | undefined, target: DeletionTarget, changed: () => void): AclRule[] | undefined {
+  if (!rules) return rules
+
+  return rules.flatMap((rule) => {
+    const src = withoutReference(rule.src, target)
+    const dst = withoutReference(rule.dst, target)
+    if (src.length === rule.src.length && dst.length === rule.dst.length) return [rule]
+    if (src.length === 0 || dst.length === 0) {
+      changed()
+      return []
+    }
+
+    changed()
+    return [{ ...rule, src, dst }]
+  })
+}
+
+function cleanGrants(grants: Grant[] | undefined, target: DeletionTarget, changed: () => void): Grant[] | undefined {
+  if (!grants) return grants
+
+  return grants.flatMap((grant) => {
+    const src = withoutReference(grant.src, target)
+    const dst = withoutReference(grant.dst, target)
+    const viaReferencesTarget = grant.via?.some((via) => isReference(via, target)) ?? false
+    if (src.length === grant.src.length && dst.length === grant.dst.length && !viaReferencesTarget) return [grant]
+    if (src.length === 0 || dst.length === 0 || viaReferencesTarget) {
+      changed()
+      return []
+    }
+
+    changed()
+    return [{ ...grant, src, dst }]
+  })
+}
+
+function cleanSSH(rules: SshRule[] | undefined, target: DeletionTarget, changed: () => void): SshRule[] | undefined {
+  if (!rules) return rules
+
+  return rules.flatMap((rule) => {
+    const src = withoutReference(rule.src, target)
+    const dst = withoutReference(rule.dst, target)
+    if (src.length === rule.src.length && dst.length === rule.dst.length) return [rule]
+    if (src.length === 0 || dst.length === 0) {
+      changed()
+      return []
+    }
+
+    changed()
+    return [{ ...rule, src, dst }]
+  })
+}
+
+function cleanAutoApprovers(
+  auto: AclSchema['autoApprovers'],
+  target: DeletionTarget,
+  changed: () => void,
+): AclSchema['autoApprovers'] {
+  if (!auto) return auto
+
+  const routes = Object.fromEntries(Object.entries(auto.routes ?? {}).flatMap(([route, approvers]) => {
+    const remaining = withoutReference(approvers, target)
+    if (remaining.length === approvers.length) return [[route, approvers]]
+    changed()
+    return remaining.length > 0 ? [[route, remaining]] : []
+  }))
+  const exitNode = withoutReference(auto.exitNode ?? [], target)
+  if (exitNode.length !== (auto.exitNode ?? []).length) changed()
+
+  return { ...auto, ...(auto.routes ? { routes } : {}), ...(auto.exitNode ? { exitNode } : {}) }
+}
+
+function cleanTests(tests: AclTest[] | undefined, target: DeletionTarget, changed: () => void): AclTest[] | undefined {
+  if (!tests) return tests
+
+  return tests.flatMap((test) => {
+    if (isReference(test.src, target)) {
+      changed()
+      return []
+    }
+
+    const accept = withoutReference(test.accept ?? [], target)
+    const deny = withoutReference(test.deny ?? [], target)
+    if (accept.length === (test.accept ?? []).length && deny.length === (test.deny ?? []).length) return [test]
+    if (accept.length === 0 && deny.length === 0) {
+      changed()
+      return []
+    }
+
+    changed()
+    const { accept: _accept, deny: _deny, ...remaining } = test
+    return [{ ...remaining, ...(accept.length > 0 ? { accept } : {}), ...(deny.length > 0 ? { deny } : {}) }]
+  })
+}
+
+function cleanSSHTests(tests: SshTest[] | undefined, target: DeletionTarget, changed: () => void): SshTest[] | undefined {
+  if (!tests) return tests
+
+  return tests.flatMap((test) => {
+    const dst = withoutReference(test.dst, target)
+    if (isReference(test.src, target) || dst.length === 0) {
+      changed()
+      return []
+    }
+    if (dst.length === test.dst.length) return [test]
+
+    changed()
+    return [{ ...test, dst }]
+  })
+}
+
+function withoutReference(values: string[], target: DeletionTarget) {
+  return values.filter((value) => !isReference(value, target))
+}
+
+function isReference(value: string, target: DeletionTarget) {
+  return target.section === 'groups'
+    ? value === target.name
+    : value === target.name || value.startsWith(`${target.name}:`)
+}
+
+function same(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function cascadeOperations(before: AclSchema, after: AclSchema): PatchOp[] {
+  return [
+    ...mapOperations('/groups', before.groups, after.groups),
+    ...mapOperations('/tagOwners', before.tagOwners, after.tagOwners),
+    ...arrayOperations('/acls', before.acls, after.acls),
+    ...arrayOperations('/grants', before.grants, after.grants),
+    ...arrayOperations('/ssh', before.ssh, after.ssh),
+    ...autoApproverOperations(before.autoApprovers, after.autoApprovers),
+    ...arrayOperations('/tests', before.tests, after.tests),
+    ...arrayOperations('/sshTests', before.sshTests, after.sshTests),
+  ]
+}
+
+function mapOperations<T>(path: string, before: Record<string, T> | undefined, after: Record<string, T> | undefined): PatchOp[] {
+  const beforeEntries = before ?? {}
+  const afterEntries = after ?? {}
+  const ops: PatchOp[] = []
+
+  for (const key of Object.keys(beforeEntries)) {
+    const previous = beforeEntries[key]
+    const next = afterEntries[key]
+    const entryPath = `${path}/${escapePointer(key)}`
+
+    if (next === undefined) ops.push({ op: 'remove', path: entryPath })
+    else if (!same(previous, next)) ops.push({ op: 'replace', path: entryPath, value: next })
+  }
+
+  for (const [key, next] of Object.entries(afterEntries)) {
+    if (beforeEntries[key] === undefined) ops.push({ op: 'add', path: `${path}/${escapePointer(key)}`, value: next })
+  }
+
+  return ops
+}
+
+function arrayOperations<T>(path: string, before: T[] | undefined, after: T[] | undefined): PatchOp[] {
+  const previous = before ?? []
+  const next = after ?? []
+  const pairs = unchangedPairs(previous, next)
+  const replacements: PatchOp[] = []
+  const removals: PatchOp[] = []
+  const additions: PatchOp[] = []
+  let previousStart = 0
+  let nextStart = 0
+
+  for (const [previousIndex, nextIndex] of [...pairs, [previous.length, next.length]]) {
+    const previousLength = previousIndex - previousStart
+    const nextLength = nextIndex - nextStart
+    const shared = Math.min(previousLength, nextLength)
+
+    for (let index = 0; index < shared; index++) {
+      replacements.push({ op: 'replace', path: `${path}/${previousStart + index}`, value: next[nextStart + index] })
+    }
+    for (let index = previousLength - 1; index >= shared; index--) {
+      removals.push({ op: 'remove', path: `${path}/${previousStart + index}` })
+    }
+    for (let index = shared; index < nextLength; index++) {
+      additions.push({ op: 'add', path: `${path}/-`, value: next[nextStart + index] })
+    }
+
+    previousStart = previousIndex + 1
+    nextStart = nextIndex + 1
+  }
+
+  return [...replacements, ...removals.sort((left, right) => Number(right.path.split('/').at(-1)) - Number(left.path.split('/').at(-1))), ...additions]
+}
+
+function unchangedPairs<T>(before: T[], after: T[]): Array<[number, number]> {
+  const lengths = Array.from({ length: before.length + 1 }, () => Array(after.length + 1).fill(0))
+
+  for (let previous = before.length - 1; previous >= 0; previous--) {
+    for (let next = after.length - 1; next >= 0; next--) {
+      lengths[previous][next] = same(before[previous], after[next])
+        ? lengths[previous + 1][next + 1] + 1
+        : Math.max(lengths[previous + 1][next], lengths[previous][next + 1])
+    }
+  }
+
+  const pairs: Array<[number, number]> = []
+  let previous = 0
+  let next = 0
+
+  while (previous < before.length && next < after.length) {
+    if (same(before[previous], after[next])) {
+      pairs.push([previous, next])
+      previous++
+      next++
+    } else if (lengths[previous + 1][next] >= lengths[previous][next + 1]) {
+      previous++
+    } else {
+      next++
+    }
+  }
+
+  return pairs
+}
+
+function autoApproverOperations(before: AclSchema['autoApprovers'], after: AclSchema['autoApprovers']): PatchOp[] {
+  if (!before || !after) return same(before, after) ? [] : [{ op: before ? 'replace' : 'add', path: '/autoApprovers', value: after }]
+
+  return [
+    ...mapOperations('/autoApprovers/routes', before.routes, after.routes),
+    ...(same(before.exitNode, after.exitNode) ? [] : [{ op: before.exitNode === undefined ? 'add' : 'replace', path: '/autoApprovers/exitNode', value: after.exitNode } satisfies PatchOp]),
+  ]
 }
 
 export function rulesWithPendingChanges(rules: AclRule[], pending: PatchOp[]): AclRule[] {
@@ -177,4 +493,8 @@ function arrayIndex(value: string) {
 
 function unescape(value: string) {
   return value.replaceAll('~1', '/').replaceAll('~0', '~')
+}
+
+function escapePointer(value: string) {
+  return value.replaceAll('~', '~0').replaceAll('/', '~1')
 }

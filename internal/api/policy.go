@@ -10,6 +10,7 @@ import (
 
 	"github.com/jemang/headboard/internal/acl"
 	"github.com/jemang/headboard/internal/auth"
+	"github.com/jemang/headboard/internal/hs"
 	"github.com/jemang/headboard/internal/store"
 )
 
@@ -73,6 +74,15 @@ type policyPreviewOutput struct {
 	}
 }
 
+func policyCheckDetail(err error) string {
+	var apiErr *hs.APIError
+	if errors.As(err, &apiErr) && apiErr.Status >= http.StatusBadRequest && apiErr.Status < http.StatusInternalServerError {
+		return upstreamDetail(apiErr.Body, "Headscale rejected the policy")
+	}
+
+	return "could not validate the policy"
+}
+
 func init() {
 	register(func(api huma.API, deps Deps) {
 		huma.Register(api, huma.Operation{
@@ -115,7 +125,7 @@ func init() {
 
 			if err := deps.Mutator.CheckPolicy(ctx, next); err != nil {
 				out.Body.Valid = false
-				out.Body.Error = err.Error()
+				out.Body.Error = policyCheckDetail(err)
 			}
 
 			return out, nil

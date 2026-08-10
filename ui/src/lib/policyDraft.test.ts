@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AclRule, AclSchema, Grant, PatchOp } from './api'
-import { grantsWithPendingChanges, rulesWithPendingChanges, schemaWithPendingChanges } from './policyDraft'
+import { cascadePolicyDeletion, grantsWithPendingChanges, newMapEntryPatch, rulesWithPendingChanges, schemaWithPendingChanges } from './policyDraft'
 
 const rule = (src: string[], dst: string[]): AclRule => ({ action: 'accept', src, dst })
 const grant = (src: string[], dst: string[], ip: string[], via?: string[], app?: unknown): Grant => ({
@@ -60,6 +60,33 @@ describe('grantsWithPendingChanges', () => {
 })
 
 describe('schemaWithPendingChanges', () => {
+  const firstMapEntries: Array<['groups' | 'tagOwners' | 'hosts', string, string | string[]]> = [
+    ['groups', 'group:ops', ['ali@']],
+    ['tagOwners', 'tag:prod', ['group:ops']],
+    ['hosts', 'db', '100.64.0.8'],
+  ]
+
+  it.each(firstMapEntries)('creates the missing %s map before adding its first entry', (section, key, value) => {
+    expect(newMapEntryPatch({}, [], section, key, value)).toEqual({
+      op: 'add', path: `/${section}`, value: { [key]: value },
+    })
+  })
+
+  it('adds another entry under a map that already exists', () => {
+    expect(newMapEntryPatch({ hosts: { db: '100.64.0.8' } }, [], 'hosts', 'cache', '100.64.0.9')).toEqual({
+      op: 'add', path: '/hosts/cache', value: '100.64.0.9',
+    })
+  })
+
+  it('keeps the first group addressable when staging its members', () => {
+    const firstGroup = newMapEntryPatch({}, [], 'groups', 'group:ops', [])
+
+    expect(schemaWithPendingChanges({}, [
+      firstGroup,
+      { op: 'replace', path: '/groups/group:ops', value: ['ali@'] },
+    ])).toEqual({ groups: { 'group:ops': ['ali@'] } })
+  })
+
   it('renders staged tags and routing approvals before the policy is saved', () => {
     expect(
       schemaWithPendingChanges({}, [
@@ -133,5 +160,79 @@ describe('projection isolation', () => {
 
     expect(create.value).toEqual([grant([], [], ['*'])])
     expect(grantsWithPendingChanges(schema.grants ?? [], pending)).toHaveLength(3)
+  })
+})
+
+describe('cascadePolicyDeletion', () => {
+  it('removes a group and its dependencies without dropping surviving access', () => {
+    const schema: AclSchema = {
+      groups: { 'group:ops': ['ops@'], 'group:eng': ['alice@'] },
+      tagOwners: { 'tag:prod': ['group:ops'], 'tag:ci': ['group:eng'] },
+      acls: [
+        rule(['group:ops', 'group:eng'], ['tag:prod:443', 'tag:ci:443']),
+        rule(['group:ops'], ['tag:ci:22']),
+      ],
+      grants: [grant(['group:ops', 'alice@'], ['tag:prod:443', 'tag:ci:443'], ['*'])],
+      ssh: [{ action: 'accept', src: ['group:ops'], dst: ['tag:prod'], users: ['root'] }],
+      autoApprovers: { routes: { '10.0.0.0/24': ['tag:prod', 'tag:ci'] }, exitNode: ['tag:prod', 'tag:ci'] },
+      tests: [
+        { src: 'group:ops', accept: ['tag:prod:22'] },
+        { src: 'alice@', accept: ['tag:prod:22', 'tag:ci:22'] },
+      ],
+      sshTests: [
+        { src: 'group:ops', dst: ['tag:prod'], accept: ['root'] },
+        { src: 'alice@', dst: ['tag:prod', 'tag:ci'], accept: ['root'] },
+      ],
+    }
+
+    const result = cascadePolicyDeletion(schema, [], { section: 'groups', name: 'group:ops' })
+    const next = schemaWithPendingChanges(schema, result.ops)
+
+    expect(next.groups).toEqual({ 'group:eng': ['alice@'] })
+    expect(next.tagOwners).toEqual({ 'tag:ci': ['group:eng'] })
+    expect(next.acls).toEqual([rule(['group:eng'], ['tag:ci:443'])])
+    expect(next.grants).toEqual([grant(['alice@'], ['tag:ci:443'], ['*'])])
+    expect(next.ssh).toEqual([])
+    expect(next.autoApprovers).toEqual({ routes: { '10.0.0.0/24': ['tag:ci'] }, exitNode: ['tag:ci'] })
+    expect(next.tests).toEqual([{ src: 'alice@', accept: ['tag:ci:22'] }])
+    expect(next.sshTests).toEqual([{ src: 'alice@', dst: ['tag:ci'], accept: ['root'] }])
+    expect(result.affected).toBeGreaterThan(1)
+    expect(result.ops).toEqual(expect.arrayContaining([
+      { op: 'remove', path: '/groups/group:ops' },
+      { op: 'remove', path: '/tagOwners/tag:prod' },
+      { op: 'remove', path: '/acls/1' },
+      { op: 'remove', path: '/ssh/0' },
+    ]))
+    expect(result.ops).not.toContainEqual(expect.objectContaining({ path: '/acls' }))
+  })
+
+  it('removes a tag, including port-qualified references and grants restricted through it', () => {
+    const schema: AclSchema = {
+      tagOwners: { 'tag:prod': ['ali@'], 'tag:ci': ['ali@'] },
+      acls: [rule(['tag:prod', 'alice@'], ['tag:prod:443', 'tag:ci:443'])],
+      grants: [
+        grant(['alice@'], ['tag:ci:443'], ['*'], ['tag:prod']),
+        grant(['alice@'], ['tag:prod:443', 'tag:ci:443'], ['*']),
+      ],
+      ssh: [{ action: 'accept', src: ['alice@'], dst: ['tag:prod', 'tag:ci'], users: ['root'] }],
+      autoApprovers: { routes: { '10.0.0.0/24': ['tag:prod', 'tag:ci'] }, exitNode: ['tag:prod', 'tag:ci'] },
+      tests: [
+        { src: 'tag:prod', accept: ['tag:ci:22'] },
+        { src: 'alice@', accept: ['tag:prod:22'], deny: ['tag:ci:22'] },
+      ],
+      sshTests: [{ src: 'alice@', dst: ['tag:prod', 'tag:ci'], accept: ['root'] }],
+    }
+
+    const result = cascadePolicyDeletion(schema, [], { section: 'tagOwners', name: 'tag:prod' })
+    const next = schemaWithPendingChanges(schema, result.ops)
+
+    expect(next.tagOwners).toEqual({ 'tag:ci': ['ali@'] })
+    expect(next.acls).toEqual([rule(['alice@'], ['tag:ci:443'])])
+    expect(next.grants).toEqual([grant(['alice@'], ['tag:ci:443'], ['*'])])
+    expect(next.ssh).toEqual([{ action: 'accept', src: ['alice@'], dst: ['tag:ci'], users: ['root'] }])
+    expect(next.autoApprovers).toEqual({ routes: { '10.0.0.0/24': ['tag:ci'] }, exitNode: ['tag:ci'] })
+    expect(next.tests).toEqual([{ src: 'alice@', deny: ['tag:ci:22'] }])
+    expect(next.sshTests).toEqual([{ src: 'alice@', dst: ['tag:ci'], accept: ['root'] }])
+    expect(result.affected).toBeGreaterThan(1)
   })
 })

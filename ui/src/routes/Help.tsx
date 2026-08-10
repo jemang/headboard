@@ -5,13 +5,15 @@ import { ErrorNote, Input, Mono, Section } from '../components/ui'
 import { Link } from '../lib/router'
 import { operatorCommand } from '../lib/operatorCommand'
 import { serverRegistrationCommand } from '../lib/serverRegistrationCommand'
+import { TagSelector } from '../components/TagSelector'
 
 export function Help() {
-  const [tag, setTag] = useState('tag:server')
+  const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [cidrs, setCidrs] = useState('192.168.1.0/24')
   const [exitNode, setExitNode] = useState('')
   const [pingTarget, setPingTarget] = useState('')
   const registrationInfo = useQuery({ queryKey: ['registration-info'], queryFn: api.registrationInfo })
+  const policy = useQuery({ queryKey: ['policy'], queryFn: api.policy })
   const url = registrationInfo.data?.headscalePublicUrl
 
   return (
@@ -26,7 +28,7 @@ export function Help() {
       </header>
 
       <Section title="Enrol and assign" actions={<span className="text-xs text-muted-foreground">manual approval required</span>}>
-        {registrationInfo.error && <ErrorNote error={registrationInfo.error} />}
+        {(registrationInfo.error || policy.error) && <ErrorNote error={registrationInfo.error ?? policy.error} />}
         <div className="grid gap-3 xl:grid-cols-2">
           <CommandCard
             title="Enrol a device"
@@ -38,12 +40,16 @@ export function Help() {
           <CommandCard
             title="Enrol a tagged server"
             description="Attach a service tag when the server starts registration."
-            command={url && tag.trim() ? serverRegistrationCommand(url, 'tagged', tag.trim()) : ''}
+            command={url && selectedTags.length ? serverRegistrationCommand(url, 'tagged', selectedTags.join(',')) : ''}
             pending={!registrationInfo.error && !url}
-            emptyHint="Enter at least one tag to generate the command."
+            emptyHint="Select at least one saved tag to generate the command."
             note={<>Every tag must be allowed by your policy’s <code>tagOwners</code>, and the request still needs approval in <Link to="/keys" className="text-accent-700 underline underline-offset-2 dark:text-accent-400">Keys</Link>.</>}
           >
-            <Field label="Tags"><Input value={tag} onChange={setTag} placeholder="tag:server,tag:prod" /></Field>
+            <Field label="Tags declared in tag owners">
+              {policy.isPending
+                ? <p className="text-xs text-muted-foreground">Loading saved tag owners…</p>
+                : <TagSelector tags={policy.data?.tokens.tags ?? []} value={selectedTags} onChange={setSelectedTags} />}
+            </Field>
           </CommandCard>
         </div>
       </Section>

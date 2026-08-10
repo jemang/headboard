@@ -9,10 +9,10 @@ export function serverRegistrationCommand(
   kind: ServerRegistrationKind,
   value: string,
 ) {
-  const args = ['sudo tailscale up', `--login-server ${shellArg(headscalePublicURL)}`]
+  const args = ['tailscale up', `--login-server=${shellArg(headscalePublicURL)}`]
 
-  if (kind === 'tagged') args.push(`--advertise-tags ${shellArg(value)}`)
-  if (kind === 'subnet') args.push(`--advertise-routes ${shellArg(value)}`)
+  if (kind === 'tagged') args.push(`--advertise-tags=${shellArg(value)}`)
+  if (kind === 'subnet') args.push(`--advertise-routes=${shellArg(value)}`)
   if (kind === 'exit') args.push('--advertise-exit-node')
 
   return args.join(' ')

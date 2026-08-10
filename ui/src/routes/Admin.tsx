@@ -12,6 +12,7 @@ import { serverRegistrationCommand, type ServerRegistrationKind } from '../lib/s
 import { Link } from '../lib/router'
 import { devicesForOwner } from '../lib/ownerDevices'
 import { duplicateUserNames } from '../lib/duplicateUserNames'
+import { TagSelector } from '../components/TagSelector'
 
 const roles: Role[] = ['owner', 'admin', 'network-admin', 'auditor', 'member']
 
@@ -717,7 +718,9 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
   const [approved, setApproved] = useState<Device | null>(null)
   const [serverKind, setServerKind] = useState<ServerRegistrationKind>('tagged')
   const [serverValue, setServerValue] = useState('')
+  const [selectedTags, setSelectedTags] = useState<string[]>([])
   const registrationInfo = useQuery({ queryKey: ['registration-info'], queryFn: api.registrationInfo })
+  const policy = useQuery({ queryKey: ['policy'], queryFn: api.policy })
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['devices'] })
@@ -742,8 +745,9 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
 
   const ready = authId.trim().length > 13
   const needsServerValue = serverKind === 'tagged' || serverKind === 'subnet'
-  const command = registrationInfo.data?.headscalePublicUrl && (!needsServerValue || serverValue.trim())
-    ? serverRegistrationCommand(registrationInfo.data.headscalePublicUrl, serverKind, serverValue.trim())
+  const commandValue = serverKind === 'tagged' ? selectedTags.join(',') : serverValue.trim()
+  const command = registrationInfo.data?.headscalePublicUrl && (!needsServerValue || commandValue)
+    ? serverRegistrationCommand(registrationInfo.data.headscalePublicUrl, serverKind, commandValue)
     : ''
 
   return (
@@ -753,7 +757,7 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
         request; it cannot join until you paste its <code>hskey-authreq-…</code> ID below and approve it.
       </p>
 
-      {(approve.error || reject.error || registrationInfo.error) && <ErrorNote error={approve.error ?? reject.error ?? registrationInfo.error} />}
+      {(approve.error || reject.error || registrationInfo.error || policy.error) && <ErrorNote error={approve.error ?? reject.error ?? registrationInfo.error ?? policy.error} />}
 
       <div className="space-y-3 rounded-lg border border-border bg-surface-0 p-3">
         <div className="flex flex-wrap items-end gap-2">
@@ -764,6 +768,7 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
               onChange={(e) => {
                 setServerKind(e.target.value as ServerRegistrationKind)
                 setServerValue('')
+                setSelectedTags([])
               }}
               className="mt-1 block rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
             >
@@ -774,8 +779,10 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
           </label>
           {serverKind === 'tagged' && (
             <label className="min-w-64 flex-1">
-              <span className="text-xs text-muted-foreground">Tags</span>
-              <Input value={serverValue} onChange={setServerValue} placeholder="tag:server,tag:prod" className="mt-1" />
+              <span className="text-xs text-muted-foreground">Tags declared in tag owners</span>
+              {policy.isPending
+                ? <p className="mt-1 text-xs text-muted-foreground">Loading saved tag owners…</p>
+                : <TagSelector tags={policy.data?.tokens.tags ?? []} value={selectedTags} onChange={setSelectedTags} />}
             </label>
           )}
           {serverKind === 'subnet' && (
@@ -793,7 +800,9 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">
-            {needsServerValue ? 'Enter the tags or routes to generate the command.' : 'Loading the Headscale address…'}
+            {needsServerValue
+              ? serverKind === 'tagged' ? 'Select at least one saved tag to generate the command.' : 'Enter subnet routes to generate the command.'
+              : 'Loading the Headscale address…'}
           </p>
         )}
       </div>

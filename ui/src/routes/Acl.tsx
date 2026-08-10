@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Grant, type PatchOp, type Policy, type PolicyPreview, type SshRule } from '../lib/api'
-import { Button, Badge, Empty, ErrorNote, Input, Section } from '../components/ui'
+import { Button, Badge, Confirm, Empty, ErrorNote, Input, Section } from '../components/ui'
 import { TokenPicker, validateTokens } from '../components/TokenPicker'
 import { TestsTab } from './AclTests'
 import { useToast } from '../components/Toast'
 import { Loading, Skeleton } from '../components/Skeleton'
-import { grantsWithPendingChanges, schemaWithPendingChanges } from '../lib/policyDraft'
+import { cascadePolicyDeletion, type CascadeResult, grantsWithPendingChanges, newMapEntryPatch, schemaWithPendingChanges } from '../lib/policyDraft'
 import { grantStageOp, jumpTarget, policyStateNotice, type PolicyTab } from '../lib/grantEditor'
 import { Link } from '../lib/router'
 import { Eye, Plus, Save, Trash2, Undo2 } from 'lucide-react'
@@ -450,6 +450,7 @@ function MapListTab({
   const draft = schemaWithPendingChanges(policy.schema, pending)
   const entries = Object.entries((section === 'groups' ? draft.groups : draft.tagOwners) ?? {})
   const [name, setName] = useState('')
+  const [pendingDeletion, setPendingDeletion] = useState<{ name: string; cascade: CascadeResult } | null>(null)
 
   const prefix = section === 'groups' ? 'group:' : 'tag:'
 
@@ -473,7 +474,10 @@ function MapListTab({
             policy={policy}
             slot={slot}
             onStage={(next) => queue({ op: 'replace', path: `/${section}/${escape(key)}`, value: next })}
-            onDelete={() => queue({ op: 'remove', path: `/${section}/${escape(key)}` })}
+            onDelete={() => setPendingDeletion({
+              name: key,
+              cascade: cascadePolicyDeletion(policy.schema, pending, { section, name: key }),
+            })}
           />
         ))}
       </ul>
@@ -483,14 +487,53 @@ function MapListTab({
         <Button
           disabled={!name.startsWith(prefix) || name.length <= prefix.length}
           onClick={() => {
-            queue({ op: 'add', path: `/${section}/${escape(name)}`, value: [] })
+            queue(newMapEntryPatch(policy.schema, pending, section, name, []))
             setName('')
           }}
         >
           Add
         </Button>
       </div>
+
+      <PolicyDeletionConfirm
+        deletion={pendingDeletion && { name: pendingDeletion.name, affected: pendingDeletion.cascade.affected }}
+        onConfirm={() => {
+          if (!pendingDeletion) return
+
+          pendingDeletion.cascade.ops.forEach(queue)
+          setPendingDeletion(null)
+        }}
+        onCancel={() => setPendingDeletion(null)}
+      />
     </Section>
+  )
+}
+
+export function PolicyDeletionConfirm({
+  deletion,
+  onConfirm,
+  onCancel,
+}: {
+  deletion: { name: string; affected: number } | null
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <Confirm
+      open={deletion !== null}
+      title={`Delete ${deletion?.name ?? 'policy entry'} and clean dependencies?`}
+      body={
+        deletion && (
+          <>
+            This stages deletion of <code>{deletion.name}</code> and updates {deletion.affected} policy entr
+            {deletion.affected === 1 ? 'y' : 'ies'}. Review the diff before saving.
+          </>
+        )
+      }
+      confirmLabel="Stage deletion"
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
   )
 }
 
@@ -558,7 +601,7 @@ function HostsTab({ policy, pending, queue }: { policy: Policy; pending: PatchOp
         <Button
           disabled={name === '' || cidr === ''}
           onClick={() => {
-            queue({ op: 'add', path: `/hosts/${escape(name)}`, value: cidr })
+            queue(newMapEntryPatch(policy.schema, pending, 'hosts', name, cidr))
             setName('')
             setCidr('')
           }}

@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/juanfont/headscale/hscontrol/types"
 
 	"github.com/jemang/headboard/internal/auth"
+	"github.com/jemang/headboard/internal/hs"
 )
 
 type renameInput struct {
@@ -48,6 +51,10 @@ func init() {
 		}, func(ctx context.Context, in *renameInput) (*deviceOutput, error) {
 			p, node, err := deviceForWrite(ctx, deps, in.ID)
 			if err != nil {
+				return nil, err
+			}
+
+			if err := validateDeviceName(in.Body.Name); err != nil {
 				return nil, err
 			}
 
@@ -224,10 +231,46 @@ func finish(ctx context.Context, deps Deps, p auth.Principal, action, targetType
 	}
 }
 
+func validateDeviceName(name string) error {
+	if strings.Contains(name, ".") {
+		return huma.Error422UnprocessableEntity("device names cannot contain a period")
+	}
+
+	return nil
+}
+
 // upstream turns a Headscale error into something a browser can show without
 // leaking the admin API key or the internal URL.
 func upstream(err error, msg string) error {
-	deps := huma.Error502BadGateway(msg, err)
+	var apiErr *hs.APIError
+	if errors.As(err, &apiErr) && apiErr.Status >= http.StatusBadRequest && apiErr.Status < http.StatusInternalServerError {
+		return huma.NewError(apiErr.Status, upstreamDetail(apiErr.Body, msg))
+	}
 
-	return deps
+	return huma.Error502BadGateway(msg, err)
+}
+
+// upstreamDetail keeps Headscale's validation reason useful without exposing
+// an upstream URL or returning an HTML proxy error page to the browser.
+func upstreamDetail(body, fallback string) string {
+	body = strings.TrimSpace(body)
+	if body == "" || strings.HasPrefix(body, "<") {
+		return fallback
+	}
+
+	var problem struct {
+		Detail  string `json:"detail"`
+		Message string `json:"message"`
+		Error   string `json:"error"`
+	}
+
+	if json.Unmarshal([]byte(body), &problem) == nil {
+		for _, detail := range []string{problem.Detail, problem.Message, problem.Error} {
+			if strings.TrimSpace(detail) != "" {
+				return detail
+			}
+		}
+	}
+
+	return fallback
 }
