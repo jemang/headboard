@@ -27,6 +27,17 @@ export function Help() {
         </p>
       </header>
 
+      <Section title="Install Tailscale" actions={<span className="text-xs text-muted-foreground">Linux and macOS</span>}>
+        <div className="grid gap-3">
+          <CommandCard
+            title="Install the Tailscale client"
+            description="Install the client on a device that does not have it yet, before enrolling it below."
+            command="curl -fsSL https://tailscale.com/install.sh | sh"
+            note="Installing the client does not connect the device to anything. Windows, iOS, and Android install from their own app store instead."
+          />
+        </div>
+      </Section>
+
       <Section title="Enrol and assign" actions={<span className="text-xs text-muted-foreground">manual approval required</span>}>
         {(registrationInfo.error || policy.error) && <ErrorNote error={registrationInfo.error ?? policy.error} />}
         <div className="grid gap-3 xl:grid-cols-2">

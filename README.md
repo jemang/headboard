@@ -333,6 +333,10 @@ store is `dev/headboard.db` — delete the file to start over.
 `dev/fixtures.sh` refuses to run against anything but loopback, so it cannot be aimed at production
 by accident.
 
+[`dev/README.md`](dev/README.md) is the runbook for both loops — verification commands, the
+sign-in queue, teardown, and the bootstrap order a *fresh* Headscale volume needs (`up.sh` alone
+cannot seed one: it writes the policy before the nodes its `tests` block asserts on).
+
 ### Hot reload
 
 Run the two halves separately — `HEADBOARD_DEV=true` makes the Go server proxy unmatched routes to
