@@ -371,7 +371,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		t.Fatalf("counting migrations: %v", err)
 	}
 
-	if n != 2 {
-		t.Errorf("schema_migrations has %d rows after two opens, want 2", n)
+	if n != 3 {
+		t.Errorf("schema_migrations has %d rows after two opens, want 3", n)
 	}
 }

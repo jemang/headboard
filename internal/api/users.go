@@ -240,6 +240,13 @@ func init() {
 				return nil, upstream(err, "could not delete the user")
 			}
 
+			// Headscale has already dropped the user, so this cannot roll it
+			// back. A failure leaves orphan rows that sync already ignores
+			// (their user id no longer resolves) and the SSH page lists.
+			if err := deps.Store.DeleteSSHUser(ctx, uint64(in.ID)); err != nil {
+				deps.Log.Error("ssh cleanup after user delete failed", "user", in.ID, "err", err)
+			}
+
 			finish(ctx, deps, p, "user.delete", "user", int64(in.ID), nil, nil)
 
 			return nil, nil

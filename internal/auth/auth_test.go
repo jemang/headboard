@@ -189,3 +189,34 @@ func TestAppPathDoesNotDoubleThePrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestOnlyOwnerAndAdminManageSSH(t *testing.T) {
+	for role, want := range map[store.Role]bool{
+		store.RoleOwner:        true,
+		store.RoleAdmin:        true,
+		store.RoleNetworkAdmin: false,
+		store.RoleAuditor:      false,
+		store.RoleMember:       false,
+	} {
+		if got := Can(role, CapManageSSH); got != want {
+			t.Errorf("Can(%s, manage:ssh) = %v, want %v", role, got, want)
+		}
+	}
+}
+
+// Capabilities is what the UI reads to show a page at all; a capability the
+// server grants but this list omits is a feature nobody can reach.
+func TestCapabilitiesListsEveryGrantedCapability(t *testing.T) {
+	for role, granted := range capabilities {
+		listed := map[Capability]bool{}
+		for _, c := range Capabilities(role) {
+			listed[c] = true
+		}
+
+		for c, ok := range granted {
+			if ok && !listed[c] {
+				t.Errorf("%s is granted %s but Capabilities omits it", role, c)
+			}
+		}
+	}
+}

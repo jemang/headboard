@@ -78,12 +78,17 @@ for u in alice bob ops; do
   fi
 done
 
-# -------------------------------------------------------------- policy set ---
-# Before tagging: tag:prod / tag:ci must have owners or the tag is rejected.
+# -------------------------------------------------------- bootstrap policy ---
+# Tagging needs tag owners first, but the real policy's tests cannot pass until
+# the nodes they name exist, so a minimal policy goes in now and the real one
+# after seeding.
 
-log "applying dev/policy.hujson"
-"${COMPOSE[@]}" cp dev/policy.hujson headscale-dev:/tmp/policy.hujson
-"${HS[@]}" policy set --file /tmp/policy.hujson
+log "applying bootstrap policy (tag owners only)"
+BOOTSTRAP=$(mktemp)
+printf '{"tagOwners": {"tag:prod": ["ops@"], "tag:ci": ["ops@"]}}\n' >"$BOOTSTRAP"
+"${COMPOSE[@]}" cp "$BOOTSTRAP" headscale-dev:/tmp/bootstrap.json
+rm -f "$BOOTSTRAP"
+"${HS[@]}" policy set --file /tmp/bootstrap.json
 
 # ------------------------------------------------------------------- nodes ---
 
@@ -92,6 +97,7 @@ seed_node alice-phone alice
 seed_node bob-desktop bob
 seed_node ops-gw ops 10.0.0.0/24 0.0.0.0/0 ::/0
 seed_node prod-web ops
+seed_node ci-runner ops
 
 # ------------------------------------------------- routes and tags on nodes ---
 
@@ -107,6 +113,18 @@ if [[ -n "$WEB_ID" ]]; then
   "${HS[@]}" nodes tag --identifier "$WEB_ID" --tags tag:prod >/dev/null
   log "prod-web: tagged tag:prod"
 fi
+
+CI_ID=$(node_id ci-runner)
+if [[ -n "$CI_ID" ]]; then
+  "${HS[@]}" nodes tag --identifier "$CI_ID" --tags tag:ci >/dev/null
+  log "ci-runner: tagged tag:ci"
+fi
+
+# -------------------------------------------------------------- policy set ---
+
+log "applying dev/policy.hujson"
+"${COMPOSE[@]}" cp dev/policy.hujson headscale-dev:/tmp/policy.hujson
+"${HS[@]}" policy set --file /tmp/policy.hujson
 
 # ----------------------------------------------------------------- api key ---
 # Reuse an existing unexpired key if dev/.env.dev already has one — the secret

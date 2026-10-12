@@ -73,6 +73,10 @@ type Deps struct {
 	// put it back — the login URL below being the only one.
 	BasePath string
 
+	// AgentDir holds the bundled headboard-agent binaries served to the
+	// installer. Empty or missing means this build has none.
+	AgentDir string
+
 	Log *slog.Logger
 }
 
@@ -115,6 +119,11 @@ func Mount(router chi.Router, deps Deps) huma.API {
 	if deps.Tailnet != nil {
 		router.Get("/api/events", EventsHandler(deps.Tailnet))
 	}
+
+	// The installer and agent binary are files, not JSON, and must be
+	// fetchable before the agent has a token.
+	router.Get("/api/ssh/agent/install.sh", installScriptHandler())
+	router.Get("/api/ssh/agent/bin/{arch}", agentBinaryHandler(deps.AgentDir))
 
 	return api
 }

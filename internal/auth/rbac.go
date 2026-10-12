@@ -38,6 +38,11 @@ const (
 
 	// CapManageOwners covers promoting and demoting owners.
 	CapManageOwners Capability = "manage:owners"
+
+	// CapManageSSH covers SSH keys, who may log in where, and the agents
+	// that write authorized_keys. It is a login credential, so it stays with
+	// the roles that can already manage users.
+	CapManageSSH Capability = "manage:ssh"
 )
 
 // capabilities is the whole authorisation model, in one readable table.
@@ -50,12 +55,12 @@ var capabilities = map[store.Role]map[Capability]bool{
 	store.RoleOwner: {
 		CapViewSelf: true, CapViewAll: true, CapManageDevices: true,
 		CapManagePolicy: true, CapManageUsers: true, CapManageKeys: true,
-		CapViewAudit: true, CapManageOwners: true,
+		CapViewAudit: true, CapManageOwners: true, CapManageSSH: true,
 	},
 	store.RoleAdmin: {
 		CapViewSelf: true, CapViewAll: true, CapManageDevices: true,
 		CapManagePolicy: true, CapManageUsers: true, CapManageKeys: true,
-		CapViewAudit: true,
+		CapViewAudit: true, CapManageSSH: true,
 	},
 	store.RoleNetworkAdmin: {
 		CapViewSelf: true, CapViewAll: true, CapManageDevices: true,
@@ -95,6 +100,7 @@ func Capabilities(role store.Role) []Capability {
 var allCapabilities = []Capability{
 	CapViewSelf, CapViewAll, CapManageDevices, CapManagePolicy,
 	CapManageUsers, CapManageKeys, CapViewAudit, CapManageOwners,
+	CapManageSSH,
 }
 
 // Principal is the authenticated caller.

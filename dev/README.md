@@ -10,7 +10,7 @@ Two loops. Pick one.
 **All-in-Docker** — nothing to install, rebuilds a container per change:
 
 ```sh
-./dev/up.sh          # Headscale + seed data (see "Fresh volume" if this fails)
+./dev/up.sh          # Headscale + seed data, works from an empty volume
 ./dev/app.sh up      # Headboard + dev IdP, built from this checkout
 ./dev/app.sh logs
 ./dev/app.sh down
@@ -45,79 +45,34 @@ or the `go run` terminal.
 `"headscaleState":"unavailable"` with `acl policy not found` in the logs means
 Headscale is running but never got seeded. That is the next section.
 
-## Fresh volume: `dev/up.sh` cannot seed from empty on its own
+## Fresh volume
 
-Confirmed 2026-08-18. `up.sh` applies `dev/policy.hujson` *before* it seeds nodes,
-but that policy's `tests` block asserts on `alice@`, `ops@`, `tag:prod:443` and
-`tag:ci:22` — and Headscale refuses to store any policy whose tests fail. With no
-nodes yet, every assertion resolves to no IP addresses, `policy set` errors, and
-`set -e` kills the script before it reaches the node seeding. Re-running does not
-help: it dies at the same line.
+Since 2026-10-12 `dev/up.sh` seeds an empty volume on its own. Headscale refuses
+to store a policy whose `tests` fail, and `dev/policy.hujson` asserts on `alice@`,
+`ops@`, `tag:prod:443` and `tag:ci:22`, so the script orders the work:
 
-Order that works — nodes first, then a minimal policy so tagging is legal, then
-tags, then the real policy:
+1. a tag-owners-only bootstrap policy, so tagging is legal;
+2. the nodes: `alice-laptop`, `alice-phone`, `bob-desktop`, `ops-gw`, `prod-web`, `ci-runner`;
+3. the tags: `prod-web` gets `tag:prod`, `ci-runner` gets `tag:ci`;
+4. the real `dev/policy.hujson`, whose tests now resolve.
+
+Tagging moves a node off its owner, so `ci-runner` exists only to carry `tag:ci`.
+`ops-gw` stays untagged, which keeps `ops@` owning a device for the `ops@` test.
+Seeded nodes never report routes, because `headscale debug create-node --route`
+parses the flag and then drops it. `DebugCreateNode` rebuilds the node from
+`types.RegistrationData`, which has no `Hostinfo`.
+
+## HTTPS (for the SSH key agent)
+
+The agent and its installer refuse plain http. Put a TLS proxy in front of
+`:3000` (Nginx Proxy Manager: proxy host `headboard-dev.example.com` → `http://<mac-ip>:3000`,
+Let's Encrypt, Force SSL, and in Advanced `proxy_buffering off; proxy_read_timeout 1h;`
+so `/api/events` streams), then start Headboard with that address:
 
 ```sh
-set -euo pipefail
-HS=(docker compose -f compose.dev.yaml exec -T headscale-dev headscale)
-
-docker compose -f compose.dev.yaml up -d --wait
-for u in alice bob ops; do "${HS[@]}" users create "$u" --email "$u@headboard.test" || true; done
-
-# 1. Nodes. No real Tailscale client needed: register a pending auth request,
-#    then complete it. --route is silently dropped, so routes stay empty.
-seed() {
-  id="hskey-authreq-$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)"
-  "${HS[@]}" debug create-node --name "$1" --user "$2" --key "$id" >/dev/null
-  "${HS[@]}" auth register --user "$2" --auth-id "$id" >/dev/null
-  echo "seeded $1 -> $2"
-}
-seed alice-laptop alice
-seed alice-phone  alice
-seed bob-desktop  bob
-seed ops-gw       ops
-seed prod-web     ops
-seed ops-admin    ops   # see "why ops-admin" below
-
-# 2. tagOwners-only policy, so the tags below are allowed to exist.
-cat >/tmp/bootstrap.hujson <<'EOF'
-{
-  "tagOwners": { "tag:prod": ["ops@"], "tag:ci": ["ops@"] },
-  "acls": [ { "action": "accept", "src": ["*"], "dst": ["*:*"] } ],
-}
-EOF
-docker compose -f compose.dev.yaml cp /tmp/bootstrap.hujson headscale-dev:/tmp/bootstrap.hujson
-"${HS[@]}" policy set --file /tmp/bootstrap.hujson
-
-# 3. Tags. IRREVERSIBLE — Headscale will not let a tagged node go back to an owner.
-nid() { "${HS[@]}" nodes list --output json | python3 -c "
-import json,sys
-for n in json.load(sys.stdin) or []:
-    if n.get('name')==sys.argv[1]: print(n['id']); break" "$1"; }
-"${HS[@]}" nodes tag --identifier "$(nid prod-web)" --tags tag:prod
-"${HS[@]}" nodes tag --identifier "$(nid ops-gw)"   --tags tag:ci
-
-# 4. The real policy. Its tests now resolve, so the write is accepted.
-./dev/up.sh
+colima ssh -- env HOST_IP=$(ipconfig getifaddr en0) HEADBOARD_PUBLIC_URL=https://headboard-dev.example.com \
+  bash -c 'cd <repo> && ./dev/app.sh up'
 ```
-
-The final `./dev/up.sh` is idempotent — it skips the existing users and nodes,
-applies `dev/policy.hujson`, approves routes, and mints the API key into
-`dev/.env.dev`.
-
-### Why `ops-admin`
-
-Tagging moves a node off its owner and onto the sentinel `tagged-devices` user.
-`ops-gw` and `prod-web` are the only two `ops` nodes `up.sh` seeds, so tagging both
-leaves `ops@` owning nothing — and the policy's `ops@` test then fails with
-`source "ops@" resolved to no IP addresses`. `ops-admin` is an untagged `ops` device
-that exists purely to keep that assertion resolvable.
-
-`tag:ci` has to live on a node for the same reason (`ops@: accept tag:ci:22`), which
-is why `ops-gw` carries it. It is a gateway in name only — seeded nodes never report
-routes, because `headscale debug create-node --route` parses the flag and then drops
-it (`DebugCreateNode` rebuilds the node from `types.RegistrationData`, which has no
-`Hostinfo`).
 
 ## Signing in
 
@@ -143,8 +98,7 @@ rm -f dev/headboard.db  # host loop's own store, if you used that loop
 ```
 
 `down.sh` takes the Headscale data *and* Headboard's own store with it, so the next
-`up.sh` starts from empty — which means the "Fresh volume" bootstrap above, not a
-plain `./dev/up.sh`. To keep the tailnet fixture and only reset Headboard's
+`up.sh` starts from empty, which it handles (see "Fresh volume"). To keep the tailnet fixture and only reset Headboard's
 accounts, drop just its store (`rm -f dev/headboard.db`, or
 `docker volume rm headboard_headboard-dev-data` for the Docker loop) and redo the
 first-login-is-owner dance.

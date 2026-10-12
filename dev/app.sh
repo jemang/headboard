@@ -20,6 +20,14 @@ COMPOSE=(docker compose -f compose.dev.yaml --profile app)
 # The OIDC issuer is a single string the browser and the Headboard container
 # must both resolve, so it cannot be localhost — inside a container that is the
 # container. A real address of this machine is the one name that works in both.
+# Inside the colima VM, hostname -I answers with the VM's own address, which a
+# browser on the Mac cannot reach, so the issuer would be unusable.
+if [[ -z "${HOST_IP:-}" && -e /run/lima-boot-done ]]; then
+  echo "running inside the colima VM, which cannot see the Mac's address. From the Mac:" >&2
+  echo "  colima ssh -- env HOST_IP=\$(ipconfig getifaddr en0) bash -c 'cd $PWD && ./dev/app.sh ${1:-up}'" >&2
+  exit 1
+fi
+
 HOST_IP="${HOST_IP:-$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')}"
 
 if [[ -z "${HOST_IP}" ]]; then

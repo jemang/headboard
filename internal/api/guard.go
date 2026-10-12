@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -72,6 +73,10 @@ func requireLinked(ctx context.Context, cap auth.Capability) (auth.Principal, er
 func statusFor(err error, notFound string) error {
 	if err == nil {
 		return nil
+	}
+
+	if errors.Is(err, store.ErrNotFound) {
+		return huma.Error404NotFound(notFound)
 	}
 
 	return huma.NewError(http.StatusInternalServerError, notFound, err)

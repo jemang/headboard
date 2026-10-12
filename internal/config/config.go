@@ -81,6 +81,9 @@ type Config struct {
 	// and prints it. The way back in when the password is lost or the
 	// identity provider is misconfigured.
 	AdminReset bool
+
+	// AgentDir is where the image bundles headboard-agent binaries.
+	AgentDir string
 }
 
 // OIDCConfigured reports whether login is available. Headboard starts without
@@ -136,6 +139,7 @@ func Load() (Config, error) {
 		OIDCClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
 		Dev:              envBool("HEADBOARD_DEV", false),
 		DevUIProxy:       devUIProxy(),
+		AgentDir:         env("HEADBOARD_AGENT_DIR", "/usr/local/share/headboard/agent"),
 	}
 
 	poll, err := time.ParseDuration(env("HEADBOARD_POLL_INTERVAL", "5s"))

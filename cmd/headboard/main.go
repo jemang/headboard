@@ -221,6 +221,7 @@ func run() error {
 		OIDCEnabled:           authn.OIDCEnabled(),
 		OIDCIssuer:            cfg.OIDCIssuer,
 		BasePath:              cfg.BasePath(),
+		AgentDir:              cfg.AgentDir,
 		Log:                   log,
 	})
 
