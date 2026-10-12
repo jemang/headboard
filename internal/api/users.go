@@ -65,6 +65,18 @@ type userOutput struct {
 // ProviderIdentifier together, not Name alone) — but a name Headboard's own
 // "create user" action introduces has no such identifier, so it can only ever
 // collide, leaving an ambiguous "name@" token for policy to resolve.
+// userRef names a Headscale user for the audit log, nil when it is not in the
+// snapshot. The id alone means nothing once the user is gone.
+func userRef(users []types.User, id uint) map[string]string {
+	for _, u := range users {
+		if u.ID == id {
+			return map[string]string{"name": u.Name, "email": u.Email}
+		}
+	}
+
+	return nil
+}
+
 func duplicateUserName(users []types.User, name string) bool {
 	for _, u := range users {
 		if strings.EqualFold(u.Name, name) {
@@ -168,7 +180,7 @@ func init() {
 				return nil, upstream(err, "could not create the user")
 			}
 
-			finish(ctx, deps, p, "user.create", "user", int64(user.ID), nil, in.Body)
+			finish(ctx, deps, p, "user.create", "user", int64(user.ID), user.Name, nil, in.Body)
 
 			return &userOutput{Body: TailnetUser{
 				ID: user.ID, Name: user.Name,
@@ -183,9 +195,16 @@ func init() {
 			Summary:     "Rename a Headscale user",
 			Tags:        []string{"users"},
 		}, func(ctx context.Context, in *renameUserInput) (*userOutput, error) {
-			p, err := require(ctx, auth.CapManageUsers)
+			p, err := requireSudo(ctx, auth.CapManageUsers)
 			if err != nil {
 				return nil, err
+			}
+
+			// Best effort: without a snapshot the rename still happens, the
+			// log just lacks the old name.
+			var before map[string]string
+			if snap, err := currentSnapshot(deps); err == nil {
+				before = userRef(snap.Users, in.ID)
 			}
 
 			user, err := deps.Mutator.RenameUser(ctx, in.ID, in.Body.Name)
@@ -193,7 +212,7 @@ func init() {
 				return nil, upstream(err, "could not rename the user")
 			}
 
-			finish(ctx, deps, p, "user.rename", "user", int64(in.ID), nil, in.Body)
+			finish(ctx, deps, p, "user.rename", "user", int64(in.ID), in.Body.Name, before, in.Body)
 
 			return &userOutput{Body: TailnetUser{
 				ID: user.ID, Name: user.Name,
@@ -210,7 +229,7 @@ func init() {
 				"removes their machines from the tailnet with no way back.",
 			Tags: []string{"users"},
 		}, func(ctx context.Context, in *userIDInput) (*struct{}, error) {
-			p, err := require(ctx, auth.CapManageUsers)
+			p, err := requireSudo(ctx, auth.CapManageUsers)
 			if err != nil {
 				return nil, err
 			}
@@ -247,7 +266,7 @@ func init() {
 				deps.Log.Error("ssh cleanup after user delete failed", "user", in.ID, "err", err)
 			}
 
-			finish(ctx, deps, p, "user.delete", "user", int64(in.ID), nil, nil)
+			finish(ctx, deps, p, "user.delete", "user", int64(in.ID), userRef(snap.Users, in.ID)["name"], userRef(snap.Users, in.ID), nil)
 
 			return nil, nil
 		})

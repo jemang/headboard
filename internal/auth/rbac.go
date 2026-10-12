@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"time"
 
 	"github.com/jemang/headboard/internal/store"
 )
@@ -106,6 +107,25 @@ var allCapabilities = []Capability{
 // Principal is the authenticated caller.
 type Principal struct {
 	User store.User
+	// IP is the client address, recorded with every change the caller makes.
+	IP string
+	// SudoUntil is when this session's sudo ends; zero when it is not on.
+	SudoUntil time.Time
+	// ReauthAt is when the caller last re-authenticated at the identity
+	// provider on purpose; zero when they have not.
+	ReauthAt time.Time
+}
+
+// NeedsPin reports whether a role must hold a sudo PIN: any role that can
+// change the network, its people or its keys.
+func NeedsPin(role store.Role) bool {
+	for _, c := range []Capability{CapManageDevices, CapManagePolicy, CapManageUsers, CapManageKeys, CapManageSSH, CapManageOwners} {
+		if Can(role, c) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Can reports whether the caller has a capability.

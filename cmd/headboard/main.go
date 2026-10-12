@@ -24,6 +24,7 @@ import (
 	"github.com/jemang/headboard/internal/auth"
 	"github.com/jemang/headboard/internal/config"
 	"github.com/jemang/headboard/internal/hs"
+	"github.com/jemang/headboard/internal/realip"
 	"github.com/jemang/headboard/internal/store"
 	"github.com/jemang/headboard/internal/tailnet"
 	"github.com/jemang/headboard/internal/web"
@@ -77,6 +78,12 @@ func servedUnder(basePath string, next http.Handler) http.Handler {
 const eventStreamPath = "/api/events"
 
 func main() {
+	if len(os.Args) > 1 {
+		if _, ok := resetCommands[os.Args[1]]; ok {
+			os.Exit(runReset(os.Args[1], os.Args[2:], os.Stdout, os.Stderr))
+		}
+	}
+
 	if err := run(); err != nil {
 		slog.Error("headboard exited", "err", err)
 		os.Exit(1)
@@ -138,7 +145,7 @@ func run() error {
 
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
-	router.Use(middleware.RealIP)
+	router.Use(realip.Middleware(cfg.TrustedProxies))
 	router.Use(middleware.Recoverer)
 
 	// The event stream is exempt from the request timeout: it is meant to
@@ -164,6 +171,8 @@ func run() error {
 		SecureCookies:   cfg.SecureCookies(),
 		SessionLifetime: cfg.SessionLifetime,
 		BasePath:        cfg.BasePath(),
+		// The dev IdP sends no auth_time; nowhere else may a re-auth lack it.
+		TrustMissingAuthTime: cfg.Dev,
 	}, st)
 
 	if cfg.OIDCConfigured() {
@@ -222,6 +231,7 @@ func run() error {
 		OIDCIssuer:            cfg.OIDCIssuer,
 		BasePath:              cfg.BasePath(),
 		AgentDir:              cfg.AgentDir,
+		Sessions:              authn,
 		Log:                   log,
 	})
 

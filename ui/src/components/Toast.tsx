@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { CheckCircle2, X, AlertTriangle } from 'lucide-react'
+import { isCancelledSudo } from '../lib/api'
 import { cn } from '../lib/cn'
 import { ToastContext, type ToastApi } from './toastContext'
 
@@ -45,7 +46,9 @@ export function ToastHost({ children }: { children: ReactNode }) {
   const api = useMemo<ToastApi>(
     () => ({
       ok: (message) => push('ok', message),
-      error: (error) => push('error', error instanceof Error ? error.message : String(error)),
+      error: (error) => {
+        if (!isCancelledSudo(error)) push('error', error instanceof Error ? error.message : String(error))
+      },
     }),
     [push],
   )

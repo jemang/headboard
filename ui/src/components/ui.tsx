@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AlertTriangle, Check, Copy, MoreVertical, X } from 'lucide-react'
+import { isCancelledSudo } from '../lib/api'
 import { cn } from '../lib/cn'
 import { copyText } from '../lib/clipboard'
 import { useModal } from '../lib/modal'
@@ -481,6 +482,8 @@ export function Empty({
 }
 
 export function ErrorNote({ error }: { error: unknown }) {
+  if (isCancelledSudo(error)) return null
+
   const message = error instanceof Error ? error.message : String(error)
 
   return (

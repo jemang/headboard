@@ -6,7 +6,7 @@ export interface AppLocation {
   hash: string
 }
 
-export type RouteId = 'devices' | 'acl' | 'people' | 'ssh' | 'keys' | 'help' | 'account'
+export type RouteId = 'devices' | 'acl' | 'people' | 'ssh' | 'keys' | 'activity' | 'help' | 'account'
 
 export interface NavItem {
   id: RouteId

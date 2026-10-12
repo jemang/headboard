@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -67,6 +68,46 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		db.Close()
 
 		return nil, err
+	}
+
+	return s, nil
+}
+
+// OpenExisting opens a database that the server has already created and
+// migrated, without creating or migrating anything. It is for the admin reset
+// commands, which run next to a live server: a wrong path must fail rather
+// than start an empty database, and only the server changes the schema.
+func OpenExisting(ctx context.Context, path string) (*Store, error) {
+	if path == "" {
+		return nil, errors.New("no database path")
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("no database at %s: %w", path, err)
+	}
+
+	db, err := sql.Open("sqlite", dsn(path))
+	if err != nil {
+		return nil, fmt.Errorf("opening database: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+
+	s := &Store{db: db}
+
+	entries, err := fs.ReadDir(migrations, "migrations")
+	if err != nil {
+		db.Close()
+
+		return nil, fmt.Errorf("reading migrations: %w", err)
+	}
+
+	for _, e := range entries {
+		applied, err := s.migrationApplied(ctx, e.Name())
+		if err != nil || !applied {
+			db.Close()
+
+			return nil, fmt.Errorf("the database at %s is not at this version's schema (%s missing); start the server once to migrate it", path, e.Name())
+		}
 	}
 
 	return s, nil

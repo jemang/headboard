@@ -74,6 +74,10 @@ HEADBOARD_PUBLIC_URL=https://headboard.example.com
 `HEADBOARD_DEV=true`, keeping session cookies secure. If a reverse proxy serves Headboard at a
 path, include it here — for example, `https://vpn.example.com/manage`.
 
+Behind a reverse proxy, also set `HEADBOARD_TRUSTED_PROXIES` to the proxy's address (for example the
+Docker network, `172.16.0.0/12`). Without it Headboard ignores forwarding headers — anyone could
+send them — so the sign-in limit and *Activity* see the proxy's address instead of the client's.
+
 Headscale itself may use `http://` only for an isolated local/private setup. Do not use HTTP to a
 remote production server: the Headscale admin API key would travel unencrypted.
 
@@ -183,8 +187,14 @@ Shown once — change it after signing in.
 
 Open `HEADBOARD_PUBLIC_URL`, sign in with that password, and change it under *Account*.
 
-Lost it? Start once with `HEADBOARD_ADMIN_RESET=1` and a fresh password is printed the same way.
-Unset it afterwards.
+Lost it? Run the reset inside the container; the new password is printed once and every session
+the account had is signed out:
+
+```sh
+docker exec <container> headboard reset-password --email admin@headboard.local
+```
+
+Starting once with `HEADBOARD_ADMIN_RESET=1` still works for the local owner too. Unset it afterwards.
 
 > The database lives in the `headboard-data` volume. Delete it and the next start is a first run
 > again: new password, empty audit log. Your tailnet is untouched — Headscale remains the source of
@@ -209,6 +219,7 @@ Everything is environment variables. The ones without a default must be set.
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | Client registered with that issuer |
 | `HEADBOARD_POLL_INTERVAL` | `5s` | Headscale has no event stream; this is the staleness bound |
 | `HEADBOARD_SESSION_LIFETIME` | `12h` | How long a login lasts |
+| `HEADBOARD_TRUSTED_PROXIES` | none | Comma-separated CIDRs or addresses of your reverse proxies. Only requests from these may set the client address with `X-Forwarded-For` / `X-Real-IP` |
 | `HEADBOARD_ADDR` | `:3000` | Listen address |
 
 ### Adding an identity provider
@@ -255,6 +266,24 @@ provider accepts several redirect URIs), or set both providers to the same *issu
 
 A member sees only machines they own — probing another device's id returns 404, not 403, so the
 tailnet's shape is not leaked by the error.
+
+### Sudo PIN
+
+Owners, admins and network-admins set a six-digit PIN the first time they sign in; Headboard will
+not let them do anything else until they have. Dangerous actions — removing devices or users,
+changing tags, routes, roles or the policy, keys, SSH access — then ask for the PIN, and stay
+unlocked for five minutes. Five wrong PINs lock it for fifteen minutes. An account that signs in
+through an identity provider confirms itself by signing in there again before setting its PIN.
+
+Forgotten PIN: clear it from inside the container, and the person sets a new one at their next
+sign-in. If one email has several accounts, the command lists them; pick one with `--id`.
+
+```sh
+docker exec <container> headboard reset-pin --email you@example.com
+```
+
+Every reset, sign-in, failed sign-in and wrong PIN appears under *Activity*, next to every change
+made through Headboard.
 
 ### Secure admission
 

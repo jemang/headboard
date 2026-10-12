@@ -9,12 +9,34 @@ import { withBase } from './basePath'
 
 export class ApiError extends Error {
   readonly status: number
+  /** The server's machine-readable reason, e.g. "sudo_required". */
+  readonly code?: string
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
   }
+}
+
+let sudoPrompt: (() => Promise<boolean>) | null = null
+
+/**
+ * A sudo_required that reaches a caller means the person saw the PIN prompt
+ * and cancelled it. That is their choice, not a failure to report.
+ */
+export function isCancelledSudo(err: unknown) {
+  return err instanceof ApiError && err.code === 'sudo_required'
+}
+
+/**
+ * Registers the PIN prompt. A request the server refuses with
+ * "sudo_required" opens it, and is sent once more if the PIN was accepted, so
+ * no caller has to know which actions are dangerous.
+ */
+export function setSudoPrompt(prompt: (() => Promise<boolean>) | null) {
+  sudoPrompt = prompt
 }
 
 /** The request never reached the server: offline, DNS, a dropped connection. */
@@ -26,6 +48,17 @@ export class NetworkError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  try {
+    return await requestOnce<T>(path, init)
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.code !== 'sudo_required' || !sudoPrompt) throw err
+    if (!(await sudoPrompt())) throw err
+
+    return requestOnce<T>(path, init)
+  }
+}
+
+async function requestOnce<T>(path: string, init?: RequestInit): Promise<T> {
   // Every call goes through here, so prefixing once is what lets the rest of
   // the client keep writing "/api/devices" while the app is served at /manage.
   // fetch rejects only when the request never got an answer; naming that apart
@@ -41,12 +74,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     // Huma reports failures as RFC 9457 problem+json; fall back to the status
     // line when the body is not JSON (a proxy error page, say).
-    const detail = await res
+    const body = await res
       .json()
-      .then((body: { detail?: string; title?: string }) => body.detail ?? body.title)
+      .then((b: { detail?: string; title?: string; code?: string }) => b)
       .catch(() => undefined)
 
-    throw new ApiError(res.status, detail ?? `${res.status} ${res.statusText}`)
+    throw new ApiError(res.status, body?.detail ?? body?.title ?? `${res.status} ${res.statusText}`, body?.code)
   }
 
   if (res.status === 204) return undefined as T
@@ -63,6 +96,23 @@ function send<T>(method: string, path: string, body?: unknown): Promise<T> {
 }
 
 // ----------------------------------------------------------------- types ---
+
+/** One recorded change. before/after are whatever the action stored. */
+export interface AuditEntry {
+  id: number
+  actorUserId?: number
+  actorLabel: string
+  action: string
+  targetType: string
+  targetId?: string
+  targetLabel?: string
+  before?: unknown
+  after?: unknown
+  ip?: string
+  createdAt: string
+}
+
+export type AuditCategory = '' | 'devices' | 'policy' | 'people' | 'keys' | 'ssh' | 'signin'
 
 export interface Health {
   status: string
@@ -95,6 +145,13 @@ export interface Me {
   capabilities: string[]
   linked: boolean
   admission: AdmissionState
+  /** The role needs a sudo PIN and this account has none: hold at setup. */
+  needsPin: boolean
+  pinSet: boolean
+  /** When sudo ends; absent when it is off. */
+  sudoUntil?: string
+  /** Signed in again at the identity provider within the last five minutes. */
+  reauthFresh: boolean
 }
 
 export interface AuthStatus {
@@ -390,6 +447,9 @@ export const api = {
   me: () => request<Me>('/api/me'),
   login: (email: string, password: string) =>
     send<void>('POST', '/auth/login', { email, password }),
+  setPin: (pin: string, password?: string) => send<{ sudoUntil: string }>('POST', '/api/me/pin', { pin, password }),
+  startSudo: (pin: string) => send<{ sudoUntil: string }>('POST', '/api/me/sudo', { pin }),
+  endSudo: () => send<void>('DELETE', '/api/me/sudo'),
   changePassword: (current: string, next: string) =>
     send<Me>('POST', '/api/me/password', { current, new: next }),
 
@@ -459,6 +519,15 @@ export const api = {
     send<void>('POST', `/api/ssh/targets/${encodeURIComponent(host)}`, { agentId, targetRef }),
   unbindSshTarget: (host: string) => send<void>('DELETE', `/api/ssh/targets/${encodeURIComponent(host)}`),
   removeSshOrphan: (host: string) => send<void>('DELETE', `/api/ssh/access/${encodeURIComponent(host)}`),
+  audit: (q: { category?: AuditCategory; actor?: string; before?: number }) => {
+    const p = new URLSearchParams()
+    if (q.category) p.set('category', q.category)
+    if (q.actor) p.set('actor', q.actor)
+    if (q.before) p.set('before', String(q.before))
+    const qs = p.toString()
+
+    return request<{ entries: AuditEntry[]; next: number }>(`/api/audit${qs ? `?${qs}` : ''}`)
+  },
   sshAgents: () => request<{ agents: SshAgent[] }>('/api/ssh/agents'),
   createSshAgent: (name: string) => send<{ agent: SshAgent; token: string }>('POST', '/api/ssh/agents', { name }),
   rotateSshAgent: (id: number) => send<{ token: string }>('POST', `/api/ssh/agents/${id}/rotate`),

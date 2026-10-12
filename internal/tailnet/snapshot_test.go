@@ -417,3 +417,42 @@ func TestBrokenPolicyStillYieldsASnapshot(t *testing.T) {
 		t.Error("a policy that references an undefined group produced a manager")
 	}
 }
+
+// A write waits for Refresh, so the very next request reads the change: two
+// quick renames must not see the snapshot from before the first one.
+func TestRefreshIsVisibleWhenItReturns(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	f := newFake()
+	w := New(f, time.Hour, quiet())
+
+	go w.Run(ctx)
+
+	waitFor(t, "the first snapshot", func() bool {
+		s, _ := w.Current()
+
+		return s != nil
+	})
+
+	f.set(func(c *fakeClient) {
+		nodes := make([]types.Node, len(c.nodes))
+		copy(nodes, c.nodes)
+		nodes[0].GivenName = "just-renamed"
+		c.nodes = nodes
+	})
+
+	w.Refresh(ctx)
+
+	if s, _ := w.Current(); s.Nodes[0].GivenName != "just-renamed" {
+		t.Errorf("after Refresh the snapshot still says %q", s.Nodes[0].GivenName)
+	}
+
+	// A caller that has gone away must not mark Headscale unreachable.
+	gone, stop := context.WithCancel(t.Context())
+	stop()
+	w.Refresh(gone)
+	if st := w.ConnectionStatus(); st.State != "connected" {
+		t.Errorf("a cancelled caller left the status %q", st.State)
+	}
+}

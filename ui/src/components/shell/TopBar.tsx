@@ -1,10 +1,12 @@
 import { Search } from 'lucide-react'
+import { SudoChip } from '../Sudo'
 
 /** Desktop bar above the page: search. Headscale's state lives in the sidebar card. */
-export function TopBar({ onSearch }: { onSearch: () => void }) {
+export function TopBar({ onSearch, sudoUntil }: { onSearch: () => void; sudoUntil?: string }) {
   return (
     <div className="border-b border-border bg-surface-1/60 px-8 py-2.5">
       <div className="mx-auto flex max-w-7xl items-center gap-3">
+        <SudoChip until={sudoUntil} />
         <button
           type="button"
           onClick={onSearch}

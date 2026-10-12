@@ -10,6 +10,9 @@ import (
 	"strings"
 
 	"github.com/juanfont/headscale/hscontrol/types"
+	"golang.org/x/oauth2"
+
+	"github.com/jemang/headboard/internal/store"
 )
 
 // UserLister supplies the live Headscale user list for identity matching. It is
@@ -47,13 +50,19 @@ func (a *Auth) Routes(mux *http.ServeMux, users UserLister, log *slog.Logger) {
 
 			// Logged at info, not warn: a mistyped password is normal, and
 			// a log that cries wolf gets ignored when it matters.
-			log.Info("password login failed", "email", body.Email, "err", err)
+			log.Info("password login failed", "email", attemptedLabel(body.Email), "err", err)
+			reason := "bad credentials"
+			if errors.Is(err, ErrTooManyAttempts) {
+				reason = "too many attempts"
+			}
+			a.record(r, nil, attemptedLabel(body.Email), "auth.login_failed", map[string]string{"method": "password", "reason": reason}, log)
 			writeError(w, status, err.Error())
 
 			return
 		}
 
 		log.Info("login", "user", user.Email, "role", user.Role, "method", "password")
+		a.record(r, &user.ID, user.Email, "auth.login", map[string]string{"method": "password"}, log)
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -66,13 +75,21 @@ func (a *Auth) Routes(mux *http.ServeMux, users UserLister, log *slog.Logger) {
 			return
 		}
 
-		if _, ok := a.CurrentUser(r.Context()); ok {
-			http.Redirect(w, r, a.cfg.BasePath+"/", http.StatusSeeOther)
+		// ?reauth=1 is a signed-in person confirming who they are before
+		// setting a sudo PIN: force a real sign-in at the provider.
+		var opts []oauth2.AuthCodeOption
+		if u, ok := a.CurrentUser(r.Context()); ok {
+			if r.URL.Query().Get("reauth") != "1" {
+				http.Redirect(w, r, a.cfg.BasePath+"/", http.StatusSeeOther)
 
-			return
+				return
+			}
+
+			a.sessions.Put(r.Context(), sessionKeyReauthFor, u.ID)
+			opts = append(opts, oauth2.SetAuthURLParam("prompt", "login"), oauth2.SetAuthURLParam("max_age", "0"))
 		}
 
-		url, err := a.AuthCodeURL(r.Context(), r.URL.Query().Get("return_to"))
+		url, err := a.AuthCodeURL(r.Context(), r.URL.Query().Get("return_to"), opts...)
 		if err != nil {
 			log.Error("starting login", "err", err)
 			http.Error(w, "could not start login", http.StatusInternalServerError)
@@ -105,6 +122,7 @@ func (a *Auth) Routes(mux *http.ServeMux, users UserLister, log *slog.Logger) {
 		user, returnTo, err := a.Callback(r.Context(), r, list, log)
 		if err != nil {
 			log.Warn("login failed", "err", err)
+			a.record(r, nil, "", "auth.login_failed", map[string]string{"method": "oidc", "reason": "identity provider sign-in failed"}, log)
 			http.Redirect(w, r, a.cfg.BasePath+"/login?error=1", http.StatusSeeOther)
 
 			return
@@ -112,17 +130,52 @@ func (a *Auth) Routes(mux *http.ServeMux, users UserLister, log *slog.Logger) {
 
 		log.Info("login", "user", user.Email, "role", user.Role,
 			"linked", user.Linked(), "method", "oidc")
+		a.record(r, &user.ID, user.Email, "auth.login", map[string]string{"method": "oidc"}, log)
 
 		http.Redirect(w, r, a.appPath(returnTo), http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("POST /auth/logout", func(w http.ResponseWriter, r *http.Request) {
+		if u, ok := a.CurrentUser(r.Context()); ok {
+			a.record(r, &u.ID, u.Email, "auth.logout", nil, log)
+		}
+
 		if err := a.Logout(r.Context()); err != nil {
 			log.Error("logout", "err", err)
 		}
 
 		http.Redirect(w, r, a.cfg.BasePath+"/login", http.StatusSeeOther)
 	})
+}
+
+// record writes a sign-in event to the audit log. Best effort, like every
+// audit write: a failed write must not turn a good sign-in into an error.
+// A failed attempt has no account, so the label is the email that was tried.
+func (a *Auth) record(r *http.Request, userID *int64, label, action string, detail any, log *slog.Logger) {
+	var after json.RawMessage
+	if detail != nil {
+		after, _ = json.Marshal(detail)
+	}
+
+	if err := a.store.Audit(r.Context(), store.AuditEntry{
+		ActorUserID: userID, ActorLabel: label, Action: action,
+		TargetType: "session", After: after, IP: clientKey(r),
+	}); err != nil {
+		log.Error("audit write failed", "action", action, "err", err)
+	}
+}
+
+// attemptedLabel is what a failed sign-in records as "who": the email that
+// was tried, but only if it looks like one. Anything else may be a password
+// typed into the wrong box, and is not kept.
+func attemptedLabel(email string) string {
+	email = strings.TrimSpace(email)
+	at := strings.LastIndex(email, "@")
+	if len(email) > 254 || at < 1 || at == len(email)-1 || strings.ContainsAny(email, " \t\r\n") || !strings.Contains(email[at:], ".") {
+		return ""
+	}
+
+	return email
 }
 
 // clientKey identifies the caller for rate limiting. RealIP has already
@@ -163,7 +216,11 @@ func (a *Auth) appPath(p string) string {
 func (a *Auth) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if u, ok := a.CurrentUser(r.Context()); ok {
-			r = r.WithContext(WithPrincipal(r.Context(), Principal{User: u}))
+			p := Principal{User: u, IP: clientKey(r)}
+			// Only a live grant reaches handlers; an expired one reads as none.
+			p.SudoUntil = a.sudoUntil(r.Context(), u.ID)
+			p.ReauthAt = a.sessionTime(r.Context(), sessionKeyReauthAt)
+			r = r.WithContext(WithPrincipal(r.Context(), p))
 		}
 
 		next.ServeHTTP(w, r)

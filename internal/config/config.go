@@ -8,11 +8,14 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jemang/headboard/internal/realip"
 )
 
 // Config is the fully-resolved configuration for one Headboard process.
@@ -47,6 +50,10 @@ type Config struct {
 	// sessions, audit log, policy revisions). A bare name is relative to the
 	// working directory; the container image points it at the mounted volume.
 	DatabaseURL string
+
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For is
+	// believed. Empty means none: the direct peer is the client.
+	TrustedProxies []netip.Prefix
 
 	// PublicURL is where browsers reach Headboard, without a trailing
 	// slash. The OIDC redirect is derived from it, so it must match what is
@@ -153,6 +160,12 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("HEADBOARD_SESSION_LIFETIME: %w", err)
 	}
 	c.SessionLifetime = life
+
+	proxies, err := realip.Parse(os.Getenv("HEADBOARD_TRUSTED_PROXIES"))
+	if err != nil {
+		return Config{}, fmt.Errorf("HEADBOARD_TRUSTED_PROXIES: %w", err)
+	}
+	c.TrustedProxies = proxies
 
 	// Devices reach Headscale at the same address Headboard does unless told
 	// otherwise, which is the common single-address case.

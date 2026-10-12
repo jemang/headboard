@@ -16,6 +16,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -29,10 +31,20 @@ import (
 	"github.com/jemang/headboard/internal/store"
 )
 
-// sessionKeyUserID is the only thing kept in the session. Everything else is
-// re-read from the database per request, so a role change takes effect on the
-// next request rather than on the next login.
+// sessionKeyUserID identifies the account. Everything about it is re-read from
+// the database per request, so a role change takes effect on the next request
+// rather than on the next login.
 const sessionKeyUserID = "user_id"
+
+// A fresh identity-provider re-authentication is the only other session state:
+// unix seconds, cleared at every sign-in. Sudo is not kept in the session at
+// all (see GrantSudo).
+const (
+	sessionKeyReauthAt = "reauth_at"
+	// sessionKeyCredVersion is the account's credential version at sign-in;
+	// a reset from the command line bumps it and ends this session.
+	sessionKeyCredVersion = "cred_version"
+)
 
 // Config is what auth needs from the environment.
 type Config struct {
@@ -48,6 +60,11 @@ type Config struct {
 	// shares the hostname — Headscale itself, typically — because a cookie
 	// on "/" is sent to that neighbour on every request.
 	BasePath string
+
+	// TrustMissingAuthTime accepts a re-authentication whose ID token has no
+	// auth_time claim. Development only: the dev IdP never sends one, and a
+	// real provider must when asked with max_age.
+	TrustMissingAuthTime bool
 }
 
 // OIDCConfig describes the optional identity provider.
@@ -166,7 +183,7 @@ func (a *Auth) LoginWithPassword(ctx context.Context, key, email, password strin
 
 	a.logins.succeed(bucket)
 
-	if err := a.login(ctx, u.ID); err != nil {
+	if err := a.login(ctx, u); err != nil {
 		return store.User{}, err
 	}
 
@@ -195,16 +212,75 @@ func (a *Auth) Issuer() string {
 }
 
 // login records a successful authentication in the session.
-func (a *Auth) login(ctx context.Context, userID int64) error {
+func (a *Auth) login(ctx context.Context, u store.User) error {
 	// A fresh token on login prevents a pre-set cookie from being promoted
 	// to an authenticated session.
 	if err := a.sessions.RenewToken(ctx); err != nil {
 		return fmt.Errorf("renewing session: %w", err)
 	}
 
-	a.sessions.Put(ctx, sessionKeyUserID, userID)
+	a.sessions.Put(ctx, sessionKeyUserID, u.ID)
+	a.sessions.Put(ctx, sessionKeyCredVersion, u.CredVersion)
+	a.sessions.Remove(ctx, sessionKeyReauthAt)
 
 	return nil
+}
+
+// GrantSudo opens sudo for this session until the given time. The caller has
+// already checked the PIN; userID guards against a session that changed hands.
+//
+// The grant goes in its own table keyed by a hash of the session token, and
+// the session itself is left unmodified. Writing it would commit the session
+// at the end of this request, and if a logout deleted the session meanwhile,
+// that commit would bring it back.
+func (a *Auth) GrantSudo(ctx context.Context, userID int64, until time.Time) error {
+	token := a.sessions.Token(ctx)
+	if id, _ := a.sessions.Get(ctx, sessionKeyUserID).(int64); token == "" || id != userID {
+		return errors.New("this session is not signed in as that account")
+	}
+
+	return a.store.GrantSudo(ctx, tokenHash(token), userID, until)
+}
+
+// EndSudo closes sudo early.
+func (a *Auth) EndSudo(ctx context.Context) error {
+	token := a.sessions.Token(ctx)
+	if token == "" {
+		return nil
+	}
+
+	return a.store.EndSudo(ctx, tokenHash(token))
+}
+
+// sudoUntil is when this session's sudo ends, zero when it is off.
+func (a *Auth) sudoUntil(ctx context.Context, userID int64) time.Time {
+	token := a.sessions.Token(ctx)
+	if token == "" {
+		return time.Time{}
+	}
+
+	until, ok := a.store.SudoUntil(ctx, tokenHash(token), userID, time.Now())
+	if !ok {
+		return time.Time{}
+	}
+
+	return until
+}
+
+func tokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+
+	return hex.EncodeToString(sum[:])
+}
+
+// sessionTime reads one of the unix-seconds keys, zero when absent.
+func (a *Auth) sessionTime(ctx context.Context, key string) time.Time {
+	v, ok := a.sessions.Get(ctx, key).(int64)
+	if !ok || v == 0 {
+		return time.Time{}
+	}
+
+	return time.Unix(v, 0)
 }
 
 // Logout ends the session.
@@ -226,6 +302,13 @@ func (a *Auth) CurrentUser(ctx context.Context) (store.User, bool) {
 	u, err := a.store.UserByID(ctx, id)
 	if err != nil {
 		// The account was deleted while the session lived on.
+		return store.User{}, false
+	}
+
+	// Sessions from before credential versions carry none, which reads as 0:
+	// the column's default, so they stay valid until the first reset.
+	version, _ := a.sessions.Get(ctx, sessionKeyCredVersion).(int64)
+	if version != u.CredVersion {
 		return store.User{}, false
 	}
 

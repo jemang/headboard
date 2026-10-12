@@ -4,6 +4,7 @@ import { navItems, parseLocation, resolveRoute } from './routes'
 const owner = ['view:self', 'view:all', 'manage:devices', 'manage:policy', 'manage:users', 'manage:keys', 'view:audit', 'manage:owners', 'manage:ssh']
 const netAdmin = ['view:self', 'view:all', 'manage:devices', 'manage:policy', 'view:audit']
 const member = ['view:self']
+const auditor = ['view:self', 'view:all', 'view:audit']
 
 describe('parseLocation', () => {
   it('splits path, query and hash', () => {
@@ -38,6 +39,11 @@ describe('resolveRoute', () => {
     expect(resolveRoute('/acl', member)).toEqual({ redirect: '/devices' })
   })
 
+  it('opens Activity for anyone who may read the audit log, and no one else', () => {
+    expect(resolveRoute('/activity', auditor)).toEqual({ route: 'activity' })
+    expect(resolveRoute('/activity', member)).toEqual({ redirect: '/devices' })
+  })
+
   it('always allows keys and account', () => {
     expect(resolveRoute('/keys', member)).toEqual({ route: 'keys' })
     expect(resolveRoute('/account', member)).toEqual({ route: 'account' })
@@ -48,13 +54,13 @@ describe('navItems', () => {
   it('gives an owner four primary tabs plus more', () => {
     const n = navItems(owner)
     expect(n.primary.map((i) => i.short)).toEqual(['Devices', 'Access', 'SSH', 'People'])
-    expect(n.more.map((i) => i.id)).toEqual(['keys', 'help', 'account'])
+    expect(n.more.map((i) => i.id)).toEqual(['keys', 'activity', 'help', 'account'])
   })
 
   it('gives a network admin devices and access', () => {
     const n = navItems(netAdmin)
     expect(n.primary.map((i) => i.short)).toEqual(['Devices', 'Access'])
-    expect(n.more.map((i) => i.id)).toEqual(['keys', 'help', 'account'])
+    expect(n.more.map((i) => i.id)).toEqual(['keys', 'activity', 'help', 'account'])
   })
 
   it('gives a member devices only', () => {
@@ -63,6 +69,6 @@ describe('navItems', () => {
   })
 
   it('keeps the desktop rail order', () => {
-    expect(navItems(owner).all.map((i) => i.id)).toEqual(['devices', 'acl', 'people', 'ssh', 'keys', 'help', 'account'])
+    expect(navItems(owner).all.map((i) => i.id)).toEqual(['devices', 'acl', 'people', 'ssh', 'keys', 'activity', 'help', 'account'])
   })
 })

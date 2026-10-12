@@ -72,3 +72,24 @@ func TestBasePathComesFromThePublicURL(t *testing.T) {
 		}
 	}
 }
+
+func TestTrustedProxies(t *testing.T) {
+	t.Setenv("HEADSCALE_URL", "https://headscale.example")
+	t.Setenv("HEADSCALE_API_KEY", "k")
+	t.Setenv("HEADBOARD_PUBLIC_URL", "https://headboard.example")
+
+	t.Setenv("HEADBOARD_TRUSTED_PROXIES", "")
+	if c, err := Load(); err != nil || len(c.TrustedProxies) != 0 {
+		t.Errorf("default = %v, %v; want no trusted proxies", c.TrustedProxies, err)
+	}
+
+	t.Setenv("HEADBOARD_TRUSTED_PROXIES", "172.16.0.0/12, 127.0.0.1")
+	if c, err := Load(); err != nil || len(c.TrustedProxies) != 2 {
+		t.Errorf("two entries = %v, %v", c.TrustedProxies, err)
+	}
+
+	t.Setenv("HEADBOARD_TRUSTED_PROXIES", "proxy.example")
+	if _, err := Load(); err == nil {
+		t.Error("a hostname was accepted; it must fail at startup, not trust nothing silently")
+	}
+}

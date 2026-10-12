@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/juanfont/headscale/hscontrol/types"
 	"golang.org/x/oauth2"
@@ -26,7 +27,22 @@ const (
 	sessionKeyNonce    = "oidc_nonce"
 	sessionKeyVerifier = "oidc_verifier"
 	sessionKeyReturnTo = "oidc_return_to"
+	// sessionKeyReauthFor marks a sign-in started to re-confirm who someone
+	// is (before setting a sudo PIN), holding the account it is meant for.
+	sessionKeyReauthFor = "oidc_reauth_for"
 )
+
+// reauthAccepted reports whether an ID token proves a sign-in just now.
+// authTime is the auth_time claim in unix seconds, zero when absent.
+func reauthAccepted(authTime int64, now time.Time, trustMissing bool) bool {
+	if authTime == 0 {
+		return trustMissing
+	}
+
+	age := now.Sub(time.Unix(authTime, 0))
+
+	return age >= -time.Minute && age < 5*time.Minute
+}
 
 // claims is the subset of the ID token Headboard reads.
 type claims struct {
@@ -36,6 +52,7 @@ type claims struct {
 	Name              string `json:"name"`
 	PreferredUsername string `json:"preferred_username"`
 	Picture           string `json:"picture"`
+	AuthTime          int64  `json:"auth_time"`
 }
 
 // AuthCodeURL starts a login and returns where to send the browser.
@@ -44,7 +61,7 @@ type claims struct {
 // the session: state defends the callback against cross-site forgery, nonce
 // binds the ID token to this attempt, and PKCE means an intercepted code cannot
 // be redeemed without the verifier.
-func (a *Auth) AuthCodeURL(ctx context.Context, returnTo string) (string, error) {
+func (a *Auth) AuthCodeURL(ctx context.Context, returnTo string, opts ...oauth2.AuthCodeOption) (string, error) {
 	state, err := randomToken()
 	if err != nil {
 		return "", err
@@ -62,10 +79,10 @@ func (a *Auth) AuthCodeURL(ctx context.Context, returnTo string) (string, error)
 	a.sessions.Put(ctx, sessionKeyVerifier, verifier)
 	a.sessions.Put(ctx, sessionKeyReturnTo, safeReturnTo(returnTo))
 
-	return a.oauth.AuthCodeURL(state,
+	return a.oauth.AuthCodeURL(state, append([]oauth2.AuthCodeOption{
 		oidcNonce(nonce),
 		oauth2.S256ChallengeOption(verifier),
-	), nil
+	}, opts...)...), nil
 }
 
 // ErrStateMismatch is returned when the callback's state does not match the one
@@ -99,12 +116,14 @@ func (a *Auth) Callback(
 	verifier, _ := a.sessions.Get(ctx, sessionKeyVerifier).(string)
 	wantNonce, _ := a.sessions.Get(ctx, sessionKeyNonce).(string)
 	returnTo, _ := a.sessions.Get(ctx, sessionKeyReturnTo).(string)
+	reauthFor, _ := a.sessions.Get(ctx, sessionKeyReauthFor).(int64)
 
 	// Single-use: clear them before any early return below.
 	a.sessions.Remove(ctx, sessionKeyState)
 	a.sessions.Remove(ctx, sessionKeyNonce)
 	a.sessions.Remove(ctx, sessionKeyVerifier)
 	a.sessions.Remove(ctx, sessionKeyReturnTo)
+	a.sessions.Remove(ctx, sessionKeyReauthFor)
 
 	token, err := a.oauth.Exchange(ctx, q.Get("code"), oauth2.VerifierOption(verifier))
 	if err != nil {
@@ -161,8 +180,13 @@ func (a *Auth) Callback(
 		return store.User{}, "", fmt.Errorf("recording login: %w", err)
 	}
 
-	if err := a.login(ctx, saved.ID); err != nil {
+	if err := a.login(ctx, saved); err != nil {
 		return store.User{}, "", err
+	}
+
+	// Only the account that asked to re-confirm, and only on a fresh sign-in.
+	if reauthFor == saved.ID && reauthAccepted(c.AuthTime, time.Now(), a.cfg.TrustMissingAuthTime) {
+		a.sessions.Put(ctx, sessionKeyReauthAt, time.Now().Unix())
 	}
 
 	if !saved.Linked() {

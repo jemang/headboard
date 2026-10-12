@@ -140,7 +140,7 @@ func init() {
 				"someone else saved in the meantime and the write is refused.",
 			Tags: []string{"policy"},
 		}, func(ctx context.Context, in *policyWriteInput) (*policyOutput, error) {
-			p, err := require(ctx, auth.CapManagePolicy)
+			p, err := requireSudo(ctx, auth.CapManagePolicy)
 			if err != nil {
 				return nil, err
 			}
@@ -179,7 +179,7 @@ func init() {
 
 			diff := acl.Unified(current, next)
 
-			finish(ctx, deps, p, "policy.save", "policy", 0,
+			finish(ctx, deps, p, "policy.save", "policy", 0, "",
 				map[string]any{"sha256": acl.SHA256(current)},
 				map[string]any{
 					"sha256":  acl.SHA256(next),

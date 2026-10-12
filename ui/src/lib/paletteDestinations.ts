@@ -9,6 +9,7 @@ export function paletteDestinations(capabilities: string[]) {
     { id: 'people', label: 'People', short: 'People', to: '/people', show: can('manage:users') },
     { id: 'ssh', label: 'SSH access', short: 'SSH', to: '/ssh', show: can('manage:ssh') },
     { id: 'keys', label: 'Keys', short: 'Keys', to: '/keys', show: true },
+    { id: 'activity', label: 'Activity', short: 'Activity', to: '/activity', show: can('view:audit') },
     { id: 'help', label: 'Help', short: 'Help', to: '/help', show: can('manage:devices') },
   ]
     .filter((d) => d.show)

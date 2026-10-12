@@ -83,7 +83,7 @@ func init() {
 			Summary:     "Link a Headboard account to a Headscale user",
 			Tags:        []string{"accounts"},
 		}, func(ctx context.Context, in *linkInput) (*accountOutput, error) {
-			p, err := require(ctx, auth.CapManageUsers)
+			p, err := requireSudo(ctx, auth.CapManageUsers)
 			if err != nil {
 				return nil, err
 			}
@@ -103,7 +103,7 @@ func init() {
 				return nil, statusFor(err, "could not link account")
 			}
 
-			audit(ctx, deps, p, "account.link", "account", in.ID, before, updated)
+			audit(ctx, deps, p, "account.link", "account", in.ID, before.Email, before, updated)
 
 			return &accountOutput{Body: updated}, nil
 		})
@@ -115,7 +115,7 @@ func init() {
 			Summary:     "Change a Headboard account's role",
 			Tags:        []string{"accounts"},
 		}, func(ctx context.Context, in *roleInput) (*accountOutput, error) {
-			p, err := require(ctx, auth.CapManageUsers)
+			p, err := requireSudo(ctx, auth.CapManageUsers)
 			if err != nil {
 				return nil, err
 			}
@@ -156,7 +156,7 @@ func init() {
 				return nil, statusFor(err, "could not change role")
 			}
 
-			audit(ctx, deps, p, "account.role", "account", in.ID, before, updated)
+			audit(ctx, deps, p, "account.role", "account", in.ID, before.Email, before, updated)
 
 			return &accountOutput{Body: updated}, nil
 		})
@@ -183,7 +183,7 @@ func init() {
 }
 
 func setAccountAdmission(ctx context.Context, deps Deps, id int64, admission store.AdmissionState) (store.User, error) {
-	p, err := require(ctx, auth.CapManageUsers)
+	p, err := requireSudo(ctx, auth.CapManageUsers)
 	if err != nil {
 		return store.User{}, err
 	}
@@ -202,7 +202,7 @@ func setAccountAdmission(ctx context.Context, deps Deps, id int64, admission sto
 		return store.User{}, statusFor(err, "could not change account admission")
 	}
 
-	audit(ctx, deps, p, "account.admission", "account", id, before.Admission, updated.Admission)
+	audit(ctx, deps, p, "account.admission", "account", id, before.Email, before.Admission, updated.Admission)
 
 	return updated, nil
 }
@@ -210,15 +210,17 @@ func setAccountAdmission(ctx context.Context, deps Deps, id int64, admission sto
 // audit records a mutation, best effort. A failed audit write must not undo a
 // change that already happened — it is logged instead, and the gap is visible
 // in the log rather than silently absent.
-func audit(ctx context.Context, deps Deps, p auth.Principal, action, targetType string, targetID int64, before, after any) {
+func audit(ctx context.Context, deps Deps, p auth.Principal, action, targetType string, targetID int64, label string, before, after any) {
 	entry := store.AuditEntry{
 		ActorUserID: &p.User.ID,
 		ActorLabel:  p.User.Email,
 		Action:      action,
 		TargetType:  targetType,
 		TargetID:    itoa64(targetID),
+		TargetLabel: label,
 		Before:      mustJSON(before),
 		After:       mustJSON(after),
+		IP:          p.IP,
 	}
 
 	if err := deps.Store.Audit(ctx, entry); err != nil {

@@ -3,7 +3,9 @@ import { useMutation } from '@tanstack/react-query'
 import { api, type Me } from '../lib/api'
 import { Button, ErrorNote, Section, Status } from '../components/ui'
 import { useToast } from '../components/toastContext'
-import { KeyRound } from 'lucide-react'
+import { KeyRound, LockKeyhole } from 'lucide-react'
+import { PinField } from '../components/Sudo'
+import { pinProblem } from '../lib/sudo'
 
 /**
  * Your own account. Small on purpose — its reason to exist is the password
@@ -105,7 +107,52 @@ export function Account({ me }: { me: Me }) {
           </p>
         )}
       </Section>
+
+      {me.pinSet && <PinSection />}
     </div>
+  )
+}
+
+/** Change the sudo PIN. The server asks for the current one first (sudo), which opens the PIN prompt. */
+function PinSection() {
+  const toast = useToast()
+  const [pin, setPin] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const change = useMutation({
+    mutationFn: () => api.setPin(pin),
+    onSuccess: () => {
+      setPin('')
+      setConfirm('')
+      toast.ok('PIN changed')
+    },
+  })
+  const problem = confirm.length === 6 ? pinProblem(pin, confirm) : pin.length === 6 ? pinProblem(pin, pin) : null
+
+  return (
+    <Section title="Sudo PIN">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          change.mutate()
+        }}
+        className="max-w-md space-y-4"
+      >
+        <p className="text-sm text-muted-foreground">
+          Dangerous actions ask for this PIN, then stay unlocked for 5 minutes. Changing it asks for the current one first.
+        </p>
+        <PinField label="New PIN" value={pin} onChange={setPin} />
+        <PinField label="Same PIN again" value={confirm} onChange={setConfirm} />
+        {problem && <p className="text-sm text-danger">{problem}</p>}
+        {change.error && <ErrorNote error={change.error} />}
+        <Button type="submit" variant="primary" icon={LockKeyhole} disabled={pin.length !== 6 || confirm.length !== 6 || problem !== null || change.isPending}>
+          {change.isPending ? 'Saving…' : 'Change PIN'}
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          Forgot it? Someone with a shell on the Headboard container can clear it:{' '}
+          <code className="break-all">docker exec &lt;container&gt; headboard reset-pin --email you@example.com</code>
+        </p>
+      </form>
+    </Section>
   )
 }
 

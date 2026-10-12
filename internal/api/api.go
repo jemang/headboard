@@ -77,6 +77,10 @@ type Deps struct {
 	// installer. Empty or missing means this build has none.
 	AgentDir string
 
+	// Sessions opens and closes sudo on the caller's session. Nil in tests
+	// that never reach a sudo grant.
+	Sessions SudoSessions
+
 	Log *slog.Logger
 }
 

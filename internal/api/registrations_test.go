@@ -9,7 +9,7 @@ import (
 
 func TestRegistrationInfoRequiresDeviceManagement(t *testing.T) {
 	deps := Deps{HeadscalePublicURL: "https://hs.example"}
-	owner := auth.Principal{User: store.User{Role: store.RoleOwner, Admission: store.AdmissionActive}}
+	owner := auth.Principal{User: store.User{Role: store.RoleOwner, Admission: store.AdmissionActive, PinHash: "set"}}
 
 	info, err := registrationInfo(auth.WithPrincipal(t.Context(), owner), deps)
 	if err != nil {

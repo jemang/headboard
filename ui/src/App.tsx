@@ -27,6 +27,8 @@ import { Acl } from './routes/Acl'
 import { Keys, People } from './routes/Admin'
 import { Account } from './routes/Account'
 import { Help } from './routes/Help'
+import { Activity } from './routes/Activity'
+import { PinSetupScreen, SudoChip, SudoPromptHost } from './components/Sudo'
 import { SshRoute } from './routes/SshAccess'
 import { BrandMark } from './components/BrandMark'
 
@@ -99,6 +101,7 @@ function Shell() {
   const admission = admissionPresentation(user.user.admission)
 
   if (!admission.canUseApp) return <AdmissionScreen email={user.user.email} title={admission.title} detail={admission.detail} />
+  if (user.needsPin) return <PinSetupScreen me={user} />
 
   const active = route
   const nav = navItems(user.capabilities)
@@ -124,6 +127,7 @@ function Shell() {
             Headboard
           </Link>
           <HealthWord health={health.data} unavailable={health.isError} compact onRail />
+          <SudoChip until={user.sudoUntil} onRail />
           <button
             type="button"
             aria-label="Search pages and devices"
@@ -134,6 +138,7 @@ function Shell() {
           </button>
         </header>
       )}
+      <SudoPromptHost />
       <Palette
         me={user}
         theme={theme}
@@ -144,7 +149,7 @@ function Shell() {
       />
       <main className="min-h-dvh pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-0 lg:pl-64">
         {wide && (
-          <TopBar onSearch={() => setPaletteOpen(true)} />
+          <TopBar onSearch={() => setPaletteOpen(true)} sudoUntil={user.sudoUntil} />
         )}
         <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
           {/* On Devices the needs list already carries a version mismatch. */}
@@ -153,6 +158,7 @@ function Shell() {
           {route === 'people' && <People me={user} />}
           {route === 'ssh' && <SshRoute capabilities={user.capabilities} />}
           {route === 'keys' && <Keys me={user} />}
+          {route === 'activity' && <Activity />}
           {route === 'help' && <Help />}
           {route === 'account' && <Account me={user} />}
           {route === 'devices' && (

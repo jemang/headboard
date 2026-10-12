@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type AuditEntry struct {
 	Action      string          `json:"action"`
 	TargetType  string          `json:"targetType"`
 	TargetID    string          `json:"targetId,omitempty"`
+	TargetLabel string          `json:"targetLabel,omitempty"`
 	Before      json.RawMessage `json:"before,omitempty"`
 	After       json.RawMessage `json:"after,omitempty"`
 	IP          string          `json:"ip,omitempty"`
@@ -26,9 +28,9 @@ type AuditEntry struct {
 func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO audit_log (actor_user_id, actor_label, action, target_type,
-		                       target_id, before, after, ip)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ActorUserID, e.ActorLabel, e.Action, e.TargetType, e.TargetID,
+		                       target_id, target_label, before, after, ip)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ActorUserID, e.ActorLabel, e.Action, e.TargetType, e.TargetID, e.TargetLabel,
 		nullJSON(e.Before), nullJSON(e.After), e.IP,
 	)
 	if err != nil {
@@ -43,8 +45,13 @@ type AuditFilter struct {
 	Action     string
 	TargetType string
 	TargetID   string
-	Limit      int
-	Before     int64
+	// Prefixes keeps actions starting with any of these ("apikey."), so one
+	// category can span several action families.
+	Prefixes []string
+	// Actor matches actor_label exactly: an email, "cli" or "agent:<name>".
+	Actor  string
+	Limit  int
+	Before int64
 }
 
 // ListAudit returns entries newest first, keyset-paginated on id.
@@ -53,18 +60,33 @@ func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, err
 		f.Limit = 100
 	}
 
+	// The prefixes come from a fixed server-side list, but they are still
+	// bound, never spliced; only the count of placeholders is built here.
+	prefixes, args := "", []any{
+		f.Action, f.Action, f.TargetType, f.TargetType,
+		f.TargetID, f.TargetID, f.Actor, f.Actor, f.Before, f.Before,
+	}
+	if len(f.Prefixes) > 0 {
+		parts := make([]string, len(f.Prefixes))
+		for i, p := range f.Prefixes {
+			parts[i] = "substr(action, 1, length(?)) = ?"
+			args = append(args, p, p)
+		}
+		prefixes = " AND (" + strings.Join(parts, " OR ") + ")"
+	}
+	args = append(args, f.Limit)
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, actor_user_id, actor_label, action, target_type, target_id,
-		       before, after, ip, created_at
+		       target_label, before, after, ip, created_at
 		FROM audit_log
 		WHERE (? = '' OR action = ?)
 		  AND (? = '' OR target_type = ?)
 		  AND (? = '' OR target_id = ?)
-		  AND (? = 0 OR id < ?)
+		  AND (? = '' OR actor_label = ?)
+		  AND (? = 0 OR id < ?)`+prefixes+`
 		ORDER BY id DESC
-		LIMIT ?`,
-		f.Action, f.Action, f.TargetType, f.TargetType,
-		f.TargetID, f.TargetID, f.Before, f.Before, f.Limit)
+		LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing audit log: %w", err)
 	}
@@ -76,7 +98,7 @@ func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, err
 		var e AuditEntry
 
 		if err := rows.Scan(&e.ID, &e.ActorUserID, &e.ActorLabel, &e.Action,
-			&e.TargetType, &e.TargetID, intoJSON(&e.Before), intoJSON(&e.After),
+			&e.TargetType, &e.TargetID, &e.TargetLabel, intoJSON(&e.Before), intoJSON(&e.After),
 			&e.IP, intoTime(&e.CreatedAt)); err != nil {
 			return nil, fmt.Errorf("scanning audit entry: %w", err)
 		}

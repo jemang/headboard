@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jemang/headboard/internal/auth"
 	"github.com/jemang/headboard/internal/store"
@@ -35,7 +36,9 @@ func TestSetAccountAdmissionRequiresUserManagement(t *testing.T) {
 	}
 	deps := Deps{Store: st, Log: slog.Default()}
 
-	approved, err := setAccountAdmission(auth.WithPrincipal(ctx, auth.Principal{User: owner}), deps, target.ID, store.AdmissionActive)
+	// Approving accounts is a sudo action; this test is about the role check.
+	owner.PinHash = "set"
+	approved, err := setAccountAdmission(auth.WithPrincipal(ctx, auth.Principal{User: owner, SudoUntil: time.Now().Add(time.Minute)}), deps, target.ID, store.AdmissionActive)
 	if err != nil {
 		t.Fatalf("owner approval: %v", err)
 	}

@@ -201,7 +201,7 @@ func init() {
 			Summary:     "Create an agent; the token is returned once",
 			Tags:        []string{"ssh"},
 		}, func(ctx context.Context, in *createSSHAgentInput) (*sshAgentTokenOutput, error) {
-			p, err := require(ctx, auth.CapManageSSH)
+			p, err := requireSudo(ctx, auth.CapManageSSH)
 			if err != nil {
 				return nil, err
 			}
@@ -220,7 +220,7 @@ func init() {
 			}
 
 			// The token is deliberately absent from the audit entry.
-			audit(ctx, deps, p, "ssh_agent.create", "ssh_agent", a.ID, nil, map[string]string{"name": a.Name})
+			audit(ctx, deps, p, "ssh_agent.create", "ssh_agent", a.ID, a.Name, nil, map[string]string{"name": a.Name})
 
 			out := &sshAgentTokenOutput{CacheControl: "no-store"}
 			out.Body.Agent = &SSHAgentView{ID: a.ID, Name: a.Name, Discovered: []sshsync.Discovered{}, Warnings: []sshsync.Warning{}}
@@ -236,7 +236,7 @@ func init() {
 			Summary:     "Replace an agent's token; the old one stops working at once",
 			Tags:        []string{"ssh"},
 		}, func(ctx context.Context, in *sshAgentIDInput) (*sshAgentTokenOutput, error) {
-			p, err := require(ctx, auth.CapManageSSH)
+			p, err := requireSudo(ctx, auth.CapManageSSH)
 			if err != nil {
 				return nil, err
 			}
@@ -254,7 +254,7 @@ func init() {
 				return nil, statusFor(err, "could not rotate the token")
 			}
 
-			audit(ctx, deps, p, "ssh_agent.rotate", "ssh_agent", in.ID, nil, nil)
+			audit(ctx, deps, p, "ssh_agent.rotate", "ssh_agent", in.ID, agentName(ctx, deps, in.ID), nil, nil)
 
 			out := &sshAgentTokenOutput{CacheControl: "no-store"}
 			out.Body.Token = raw
@@ -269,7 +269,7 @@ func init() {
 			Summary:     "Revoke an agent; refused while it still has bindings or pending clears unless forced",
 			Tags:        []string{"ssh"},
 		}, func(ctx context.Context, in *revokeSSHAgentInput) (*revokeSSHAgentOutput, error) {
-			p, err := require(ctx, auth.CapManageSSH)
+			p, err := requireSudo(ctx, auth.CapManageSSH)
 			if err != nil {
 				return nil, err
 			}
@@ -307,10 +307,26 @@ func init() {
 				out.Body.Cleanup = []string{}
 			}
 
-			audit(ctx, deps, p, "ssh_agent.revoke", "ssh_agent", in.ID, map[string]any{"name": agent.Name, "force": in.Force},
+			audit(ctx, deps, p, "ssh_agent.revoke", "ssh_agent", in.ID, agent.Name, map[string]any{"name": agent.Name, "force": in.Force},
 				map[string]any{"cleanup": out.Body.Cleanup})
 
 			return out, nil
 		})
 	})
+}
+
+// agentName looks an agent up for the audit log; empty if it cannot be read.
+func agentName(ctx context.Context, deps Deps, id int64) string {
+	agents, err := deps.Store.ListSSHAgents(ctx)
+	if err != nil {
+		return ""
+	}
+
+	for _, a := range agents {
+		if a.ID == id {
+			return a.Name
+		}
+	}
+
+	return ""
 }

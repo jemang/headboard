@@ -26,6 +26,13 @@ func require(ctx context.Context, cap auth.Capability) (auth.Principal, error) {
 		return auth.Principal{}, admissionDenied(p.User.Admission)
 	}
 
+	// The PIN is mandatory for anyone who can change things. Until it is set
+	// only /api/me, the PIN form and sign-out answer, so the setup screen
+	// cannot be skipped with a direct request.
+	if auth.NeedsPin(p.User.Role) && p.User.PinHash == "" {
+		return auth.Principal{}, coded(http.StatusForbidden, "pin_required", "set your sudo PIN first")
+	}
+
 	if !p.Can(cap) {
 		return auth.Principal{}, huma.Error403Forbidden("your role does not allow this")
 	}

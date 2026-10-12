@@ -61,6 +61,10 @@ type Watcher struct {
 	snap *Snapshot
 	err  error
 
+	// pollMu serialises polls: the background loop and a write's Refresh
+	// must not install snapshots out of order.
+	pollMu sync.Mutex
+
 	// refresh carries out-of-band refresh requests. Buffered to one: a
 	// burst of mutations only needs one refresh after the last of them.
 	refresh chan struct{}
@@ -116,6 +120,14 @@ func (w *Watcher) Invalidate() {
 	}
 }
 
+// Refresh polls now and returns once the result is installed, so a write
+// followed straight away by a read sees its own change. The caller's
+// cancellation is ignored: a browser that hangs up mid-write must not leave
+// the console reporting Headscale unreachable.
+func (w *Watcher) Refresh(ctx context.Context) {
+	w.poll(context.WithoutCancel(ctx))
+}
+
 // Current returns the latest snapshot, or the reason there is none.
 func (w *Watcher) Current() (*Snapshot, error) {
 	w.mu.RLock()
@@ -148,6 +160,9 @@ func (w *Watcher) ConnectionStatus() ConnectionStatus {
 }
 
 func (w *Watcher) poll(ctx context.Context) {
+	w.pollMu.Lock()
+	defer w.pollMu.Unlock()
+
 	ctx, cancel := context.WithTimeout(ctx, w.interval*2+5*time.Second)
 	defer cancel()
 

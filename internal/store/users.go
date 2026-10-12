@@ -99,6 +99,15 @@ type User struct {
 	// PasswordHash is never serialised. Empty for accounts that sign in
 	// through an identity provider.
 	PasswordHash string `json:"-"`
+
+	// PinHash is the sudo PIN, argon2id like the password; empty until set.
+	PinHash        string     `json:"-"`
+	PinFailures    int        `json:"-"`
+	PinLockedUntil *time.Time `json:"-"`
+
+	// CredVersion goes up when a credential is reset; a session from an
+	// older version is no longer accepted.
+	CredVersion int64 `json:"-"`
 }
 
 // Local reports whether this account signs in with a password.
@@ -112,7 +121,8 @@ func (u User) Active() bool { return u.Admission == AdmissionActive }
 
 const userColumns = `
 	id, oidc_iss, oidc_sub, email, display_name, avatar_url,
-	headscale_user_id, role, admission, created_at, last_login_at, password_hash`
+	headscale_user_id, role, admission, created_at, last_login_at, password_hash,
+	pin_hash, pin_failures, pin_locked_until, cred_version`
 
 // scanner is the shared shape of *sql.Row and *sql.Rows.
 type scanner interface{ Scan(dest ...any) error }
@@ -125,6 +135,7 @@ func scanUser(row scanner) (User, error) {
 		&u.AvatarURL, &u.HeadscaleUserID, &u.Role,
 		&u.Admission,
 		intoTime(&u.CreatedAt), intoNullTime(&u.LastLoginAt), &u.PasswordHash,
+		&u.PinHash, &u.PinFailures, intoNullTime(&u.PinLockedUntil), &u.CredVersion,
 	)
 	if err != nil {
 		return User{}, err
@@ -358,3 +369,121 @@ func normaliseEmail(email string) string {
 }
 
 var _ = sql.ErrNoRows
+
+// SetPin stores a new sudo PIN hash and forgets earlier failures.
+func (s *Store) SetPin(ctx context.Context, id int64, hash string) error {
+	return s.execOne(ctx, `UPDATE users SET pin_hash = ?, pin_failures = 0, pin_locked_until = NULL WHERE id = ?`, hash, id)
+}
+
+// ResetPinFailures clears the failure count after a correct PIN.
+func (s *Store) ResetPinFailures(ctx context.Context, id int64) error {
+	return s.execOne(ctx, `UPDATE users SET pin_failures = 0, pin_locked_until = NULL WHERE id = ?`, id)
+}
+
+// RecordPinFailure counts a wrong PIN in one statement, so two requests at
+// once cannot both read the old count. Reaching max locks sudo until
+// now+lock; the lock is returned when it is set.
+func (s *Store) RecordPinFailure(ctx context.Context, id int64, max int, lock time.Duration, now time.Time) (int, *time.Time, error) {
+	var (
+		n      int
+		locked *time.Time
+	)
+
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE users
+		SET pin_failures = pin_failures + 1,
+		    pin_locked_until = CASE WHEN pin_failures + 1 >= ? THEN ? ELSE pin_locked_until END
+		WHERE id = ?
+		RETURNING pin_failures, pin_locked_until`,
+		max, now.Add(lock).UTC().Format(timeFormat), id,
+	).Scan(&n, intoNullTime(&locked))
+	if err != nil {
+		return 0, nil, fmt.Errorf("recording pin failure: %w", err)
+	}
+
+	return n, locked, nil
+}
+
+// execOne runs an update that must touch exactly one account.
+func (s *Store) execOne(ctx context.Context, query string, args ...any) error {
+	res, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("updating account: %w", err)
+	}
+
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
+// BumpCredVersion signs an account out of every session it has.
+func (s *Store) BumpCredVersion(ctx context.Context, id int64) error {
+	return s.execOne(ctx, `UPDATE users SET cred_version = cred_version + 1 WHERE id = ?`, id)
+}
+
+// UsersByEmail lists every account with this email, any sign-in method. More
+// than one is normal: a local account and an identity-provider one can share it.
+func (s *Store) UsersByEmail(ctx context.Context, email string) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT`+userColumns+` FROM users WHERE lower(email) = ? ORDER BY id`, normaliseEmail(email))
+	if err != nil {
+		return nil, fmt.Errorf("finding accounts: %w", err)
+	}
+	defer rows.Close()
+
+	var out []User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning user: %w", err)
+		}
+		out = append(out, u)
+	}
+
+	return out, rows.Err()
+}
+
+// ResetPassword sets a new password hash, signs the account out everywhere and
+// records the reset, all in one transaction.
+func (s *Store) ResetPassword(ctx context.Context, id int64, hash string, entry AuditEntry) error {
+	if hash == "" {
+		return errors.New("refusing to set an empty password")
+	}
+
+	return s.resetCredential(ctx, id, `UPDATE users SET password_hash = ?, cred_version = cred_version + 1 WHERE id = ?`, entry, hash, id)
+}
+
+// ResetPin clears the sudo PIN and any lock, signs the account out everywhere
+// and records the reset, all in one transaction.
+func (s *Store) ResetPin(ctx context.Context, id int64, entry AuditEntry) error {
+	return s.resetCredential(ctx, id, `UPDATE users SET pin_hash = '', pin_failures = 0, pin_locked_until = NULL, cred_version = cred_version + 1 WHERE id = ?`, entry, id)
+}
+
+func (s *Store) resetCredential(ctx context.Context, id int64, update string, entry AuditEntry, args ...any) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("starting reset: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+
+	res, err := tx.ExecContext(ctx, update, args...)
+	if err != nil {
+		return fmt.Errorf("resetting credential: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_log (actor_user_id, actor_label, action, target_type,
+		                       target_id, target_label, before, after, ip)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		entry.ActorUserID, entry.ActorLabel, entry.Action, entry.TargetType, entry.TargetID, entry.TargetLabel,
+		nullJSON(entry.Before), nullJSON(entry.After), entry.IP,
+	); err != nil {
+		return fmt.Errorf("recording reset: %w", err)
+	}
+
+	return tx.Commit()
+}

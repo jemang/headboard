@@ -63,7 +63,7 @@ func init() {
 				return nil, upstream(err, "could not rename the device")
 			}
 
-			finish(ctx, deps, p, "device.rename", "device", int64(node.ID),
+			finish(ctx, deps, p, "device.rename", "device", int64(node.ID), node.GivenName,
 				toDevice(node, p), toDevice(updated, p))
 
 			return &deviceOutput{Body: toDevice(updated, p)}, nil
@@ -78,7 +78,7 @@ func init() {
 				"Members cannot set them.",
 			Tags: []string{"devices"},
 		}, func(ctx context.Context, in *tagsInput) (*deviceOutput, error) {
-			p, err := require(ctx, auth.CapManageDevices)
+			p, err := requireSudo(ctx, auth.CapManageDevices)
 			if err != nil {
 				return nil, err
 			}
@@ -100,7 +100,7 @@ func init() {
 				return nil, upstream(err, "could not set tags")
 			}
 
-			finish(ctx, deps, p, "device.tags", "device", int64(node.ID),
+			finish(ctx, deps, p, "device.tags", "device", int64(node.ID), node.GivenName,
 				node.Tags, in.Body.Tags)
 
 			return &deviceOutput{Body: toDevice(updated, p)}, nil
@@ -113,7 +113,7 @@ func init() {
 			Summary:     "Replace the routes a device may advertise",
 			Tags:        []string{"devices"},
 		}, func(ctx context.Context, in *routesInput) (*deviceOutput, error) {
-			p, err := require(ctx, auth.CapManageDevices)
+			p, err := requireSudo(ctx, auth.CapManageDevices)
 			if err != nil {
 				return nil, err
 			}
@@ -130,7 +130,7 @@ func init() {
 				return nil, upstream(err, "could not approve routes")
 			}
 
-			finish(ctx, deps, p, "device.routes", "device", int64(node.ID),
+			finish(ctx, deps, p, "device.routes", "device", int64(node.ID), node.GivenName,
 				before.ApprovedRoutes, in.Body.Routes)
 
 			return &deviceOutput{Body: toDevice(updated, p)}, nil
@@ -143,7 +143,7 @@ func init() {
 			Summary:     "Expire a device's key, forcing it to sign in again",
 			Tags:        []string{"devices"},
 		}, func(ctx context.Context, in *deviceInput) (*deviceOutput, error) {
-			p, err := require(ctx, auth.CapManageDevices)
+			p, err := requireSudo(ctx, auth.CapManageDevices)
 			if err != nil {
 				return nil, err
 			}
@@ -158,7 +158,7 @@ func init() {
 				return nil, upstream(err, "could not expire the device")
 			}
 
-			finish(ctx, deps, p, "device.expire", "device", int64(node.ID), nil, nil)
+			finish(ctx, deps, p, "device.expire", "device", int64(node.ID), node.GivenName, nil, nil)
 
 			return &deviceOutput{Body: toDevice(updated, p)}, nil
 		})
@@ -170,6 +170,11 @@ func init() {
 			Summary:     "Remove a device from the tailnet",
 			Tags:        []string{"devices"},
 		}, func(ctx context.Context, in *deviceInput) (*struct{}, error) {
+			// Before the lookup: a refusal must not depend on the device existing.
+			if _, err := requireSudo(ctx, auth.CapViewSelf); err != nil {
+				return nil, err
+			}
+
 			p, node, err := deviceForWrite(ctx, deps, in.ID)
 			if err != nil {
 				return nil, err
@@ -183,7 +188,7 @@ func init() {
 				return nil, upstream(err, "could not delete the device")
 			}
 
-			finish(ctx, deps, p, "device.delete", "device", int64(node.ID), before, nil)
+			finish(ctx, deps, p, "device.delete", "device", int64(node.ID), node.GivenName, before, nil)
 
 			return nil, nil
 		})
@@ -221,13 +226,14 @@ func nodeByID(deps Deps, id uint64) (types.Node, error) {
 	return types.Node{}, huma.Error404NotFound("no such device")
 }
 
-// finish records the change and refreshes the snapshot so the result is visible
-// immediately rather than at the next poll.
-func finish(ctx context.Context, deps Deps, p auth.Principal, action, targetType string, targetID int64, before, after any) {
-	audit(ctx, deps, p, action, targetType, targetID, before, after)
+// finish records the change and refreshes the snapshot before the response, so
+// the result is visible immediately rather than at the next poll, and the next
+// write reads the right "before" for its audit entry.
+func finish(ctx context.Context, deps Deps, p auth.Principal, action, targetType string, targetID int64, label string, before, after any) {
+	audit(ctx, deps, p, action, targetType, targetID, label, before, after)
 
 	if deps.Tailnet != nil {
-		deps.Tailnet.Invalidate()
+		deps.Tailnet.Refresh(ctx)
 	}
 }
 

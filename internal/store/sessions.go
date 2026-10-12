@@ -107,3 +107,44 @@ func (st *SessionStore) Cleanup(ctx context.Context, every time.Duration) {
 		}
 	}
 }
+
+// GrantSudo records sudo for one session until the given time. tokenHash is a
+// hash of the session token, never the token itself.
+func (s *Store) GrantSudo(ctx context.Context, tokenHash string, userID int64, until time.Time) error {
+	// Expired grants are dead weight; clearing them here keeps the table small
+	// without a background job.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM sudo_grants WHERE until <= ?`, nowText()); err != nil {
+		return fmt.Errorf("clearing expired sudo: %w", err)
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO sudo_grants (token_hash, user_id, until) VALUES (?, ?, ?)
+		ON CONFLICT (token_hash) DO UPDATE SET user_id = excluded.user_id, until = excluded.until`,
+		tokenHash, userID, fromTime(until))
+	if err != nil {
+		return fmt.Errorf("granting sudo: %w", err)
+	}
+
+	return nil
+}
+
+// SudoUntil reports when this session's sudo ends, if it is on for this account at now.
+func (s *Store) SudoUntil(ctx context.Context, tokenHash string, userID int64, now time.Time) (time.Time, bool) {
+	var until time.Time
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT until FROM sudo_grants WHERE token_hash = ? AND user_id = ? AND until > ?`,
+		tokenHash, userID, fromTime(now),
+	).Scan(intoTime(&until))
+
+	return until, err == nil
+}
+
+// EndSudo closes sudo for one session.
+func (s *Store) EndSudo(ctx context.Context, tokenHash string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM sudo_grants WHERE token_hash = ?`, tokenHash); err != nil {
+		return fmt.Errorf("ending sudo: %w", err)
+	}
+
+	return nil
+}

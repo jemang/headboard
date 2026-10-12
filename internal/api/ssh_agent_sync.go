@@ -180,11 +180,12 @@ func (h sshAgentAPI) report(ctx context.Context, in *agentReportInput) (*struct{
 // audit write is not a failed report: the agent has already acted.
 func (h sshAgentAPI) agentAudit(ctx context.Context, agent store.SSHAgent, action string, after any) {
 	_ = h.store.Audit(ctx, store.AuditEntry{
-		ActorLabel: "agent:" + agent.Name,
-		Action:     action,
-		TargetType: "ssh_agent",
-		TargetID:   fmt.Sprint(agent.ID),
-		After:      mustJSON(after),
+		ActorLabel:  "agent:" + agent.Name,
+		Action:      action,
+		TargetType:  "ssh_agent",
+		TargetLabel: agent.Name,
+		TargetID:    fmt.Sprint(agent.ID),
+		After:       mustJSON(after),
 	})
 }
 

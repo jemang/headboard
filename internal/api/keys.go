@@ -110,7 +110,7 @@ func init() {
 			Summary:     "Revoke every active pre-auth key",
 			Tags:        []string{"keys"},
 		}, func(ctx context.Context, _ *struct{}) (*revokeActivePreAuthKeysOutput, error) {
-			p, err := require(ctx, auth.CapManageKeys)
+			p, err := requireSudo(ctx, auth.CapManageKeys)
 			if err != nil {
 				return nil, err
 			}
@@ -126,7 +126,7 @@ func init() {
 			out.Body.Failed = failed
 
 			if len(expired) > 0 {
-				finish(ctx, deps, p, "preauthkey.revoke_active", "preauthkey", 0, nil, out.Body)
+				finish(ctx, deps, p, "preauthkey.revoke_active", "preauthkey", 0, "", nil, out.Body)
 			}
 
 			return out, nil
@@ -147,7 +147,7 @@ func init() {
 			}
 		},
 		) (*struct{}, error) {
-			p, err := require(ctx, auth.CapManageKeys)
+			p, err := requireSudo(ctx, auth.CapManageKeys)
 			if err != nil {
 				return nil, err
 			}
@@ -156,7 +156,7 @@ func init() {
 				return nil, upstream(err, "could not expire the key")
 			}
 
-			finish(ctx, deps, p, "preauthkey.expire", "preauthkey", 0, nil,
+			finish(ctx, deps, p, "preauthkey.expire", "preauthkey", 0, "key "+in.Body.ID, nil,
 				map[string]string{"id": in.Body.ID})
 
 			return nil, nil
@@ -203,7 +203,7 @@ func init() {
 				"shown once.",
 			Tags: []string{"keys"},
 		}, func(ctx context.Context, in *createAPIKeyInput) (*createAPIKeyOutput, error) {
-			p, err := require(ctx, auth.CapManageKeys)
+			p, err := requireSudo(ctx, auth.CapManageKeys)
 			if err != nil {
 				return nil, err
 			}
@@ -218,7 +218,7 @@ func init() {
 				return nil, upstream(err, "could not create the API key")
 			}
 
-			finish(ctx, deps, p, "apikey.create", "apikey", 0, nil,
+			finish(ctx, deps, p, "apikey.create", "apikey", 0, keyPrefix(key), nil,
 				map[string]string{"prefix": keyPrefix(key)})
 
 			out := &createAPIKeyOutput{}
@@ -236,7 +236,7 @@ func init() {
 			Summary:     "Revoke a Headscale API key",
 			Tags:        []string{"keys"},
 		}, func(ctx context.Context, in *apiKeyPrefixInput) (*struct{}, error) {
-			p, err := require(ctx, auth.CapManageKeys)
+			p, err := requireSudo(ctx, auth.CapManageKeys)
 			if err != nil {
 				return nil, err
 			}
@@ -249,7 +249,7 @@ func init() {
 				return nil, upstream(err, "could not expire the API key")
 			}
 
-			finish(ctx, deps, p, "apikey.expire", "apikey", 0, nil,
+			finish(ctx, deps, p, "apikey.expire", "apikey", 0, safePrefix(in.Prefix), nil,
 				map[string]string{"prefix": safePrefix(in.Prefix)})
 
 			return nil, nil
@@ -262,7 +262,7 @@ func init() {
 			Summary:     "Delete a Headscale API key",
 			Tags:        []string{"keys"},
 		}, func(ctx context.Context, in *apiKeyPrefixInput) (*struct{}, error) {
-			p, err := require(ctx, auth.CapManageKeys)
+			p, err := requireSudo(ctx, auth.CapManageKeys)
 			if err != nil {
 				return nil, err
 			}
@@ -275,7 +275,7 @@ func init() {
 				return nil, upstream(err, "could not delete the API key")
 			}
 
-			finish(ctx, deps, p, "apikey.delete", "apikey", 0, nil,
+			finish(ctx, deps, p, "apikey.delete", "apikey", 0, safePrefix(in.Prefix), nil,
 				map[string]string{"prefix": safePrefix(in.Prefix)})
 
 			return nil, nil

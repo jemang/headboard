@@ -475,7 +475,7 @@ func init() {
 			Summary:     "Replace who may log in as a unix user on a server",
 			Tags:        []string{"ssh"},
 		}, func(ctx context.Context, in *setSSHRowInput) (*struct{}, error) {
-			p, err := require(ctx, auth.CapManageSSH)
+			p, err := requireSudo(ctx, auth.CapManageSSH)
 			if err != nil {
 				return nil, err
 			}
@@ -503,7 +503,7 @@ func init() {
 				return nil, statusFor(err, "could not save the row")
 			}
 
-			audit(ctx, deps, p, "ssh_access.set", "ssh_host", 0, nil,
+			audit(ctx, deps, p, "ssh_access.set", "ssh_host", 0, in.Host, nil,
 				map[string]any{"host": in.Host, "unixUser": in.UnixUser, "userIds": ids})
 
 			return nil, nil
@@ -516,7 +516,7 @@ func init() {
 			Summary:     "Bind a server to the target an agent reported for it",
 			Tags:        []string{"ssh"},
 		}, func(ctx context.Context, in *approveSSHTargetInput) (*struct{}, error) {
-			p, err := require(ctx, auth.CapManageSSH)
+			p, err := requireSudo(ctx, auth.CapManageSSH)
 			if err != nil {
 				return nil, err
 			}
@@ -540,7 +540,7 @@ func init() {
 				return nil, statusFor(err, "could not approve the binding")
 			}
 
-			audit(ctx, deps, p, "ssh_target.approve", "ssh_host", 0, nil, t)
+			audit(ctx, deps, p, "ssh_target.approve", "ssh_host", 0, in.Host, nil, t)
 
 			return nil, nil
 		})
@@ -552,7 +552,7 @@ func init() {
 			Summary:     "Unbind a server; its keys are cleared on the next sync",
 			Tags:        []string{"ssh"},
 		}, func(ctx context.Context, in *sshHostInput) (*struct{}, error) {
-			p, err := require(ctx, auth.CapManageSSH)
+			p, err := requireSudo(ctx, auth.CapManageSSH)
 			if err != nil {
 				return nil, err
 			}
@@ -561,7 +561,7 @@ func init() {
 				return nil, statusFor(err, "could not unbind")
 			}
 
-			audit(ctx, deps, p, "ssh_target.unbind", "ssh_host", 0, map[string]string{"host": in.Host}, nil)
+			audit(ctx, deps, p, "ssh_target.unbind", "ssh_host", 0, in.Host, map[string]string{"host": in.Host}, nil)
 
 			return nil, nil
 		})
@@ -573,7 +573,7 @@ func init() {
 			Summary:     "Forget rows and binding of a host that left the policy",
 			Tags:        []string{"ssh"},
 		}, func(ctx context.Context, in *sshHostInput) (*struct{}, error) {
-			p, err := require(ctx, auth.CapManageSSH)
+			p, err := requireSudo(ctx, auth.CapManageSSH)
 			if err != nil {
 				return nil, err
 			}
@@ -590,7 +590,7 @@ func init() {
 				return nil, statusFor(err, "could not remove the host")
 			}
 
-			audit(ctx, deps, p, "ssh_access.remove_orphan", "ssh_host", 0, map[string]string{"host": in.Host}, nil)
+			audit(ctx, deps, p, "ssh_access.remove_orphan", "ssh_host", 0, in.Host, map[string]string{"host": in.Host}, nil)
 
 			return nil, nil
 		})

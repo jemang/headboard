@@ -1,4 +1,4 @@
-import { CircleHelp, KeyRound, KeySquare, Laptop, ShieldCheck, UserRound, Users, type LucideIcon } from 'lucide-react'
+import { CircleHelp, History, KeyRound, KeySquare, Laptop, ShieldCheck, UserRound, Users, type LucideIcon } from 'lucide-react'
 import type { RouteId } from '../../lib/routes'
 
 /** One icon per page, shared by the rail, the bottom bar and the More sheet. */
@@ -8,6 +8,7 @@ export const ICONS: Record<RouteId, LucideIcon> = {
   people: Users,
   ssh: KeySquare,
   keys: KeyRound,
+  activity: History,
   help: CircleHelp,
   account: UserRound,
 }

@@ -75,7 +75,7 @@ func init() {
 				"the Tailscale client prints.",
 			Tags: []string{"registrations"},
 		}, func(ctx context.Context, in *registrationInput) (*registrationOutput, error) {
-			p, err := require(ctx, auth.CapManageDevices)
+			p, err := requireSudo(ctx, auth.CapManageDevices)
 			if err != nil {
 				return nil, err
 			}
@@ -101,7 +101,7 @@ func init() {
 				return nil, upstream(err, "could not approve the registration")
 			}
 
-			finish(ctx, deps, p, "registration.approve", "registration", 0,
+			finish(ctx, deps, p, "registration.approve", "registration", 0, in.Body.User,
 				nil, map[string]string{"authId": redactAuthID(in.Body.AuthID), "user": in.Body.User})
 
 			return out, nil
@@ -114,7 +114,7 @@ func init() {
 			Summary:     "Reject a pending device registration",
 			Tags:        []string{"registrations"},
 		}, func(ctx context.Context, in *registrationInput) (*registrationOutput, error) {
-			p, err := require(ctx, auth.CapManageDevices)
+			p, err := requireSudo(ctx, auth.CapManageDevices)
 			if err != nil {
 				return nil, err
 			}
@@ -127,7 +127,7 @@ func init() {
 				return nil, upstream(err, "could not reject the registration")
 			}
 
-			finish(ctx, deps, p, "registration.reject", "registration", 0,
+			finish(ctx, deps, p, "registration.reject", "registration", 0, "",
 				nil, map[string]string{"authId": redactAuthID(in.Body.AuthID)})
 
 			return &registrationOutput{}, nil

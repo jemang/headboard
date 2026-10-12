@@ -3,6 +3,7 @@ package auth
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/juanfont/headscale/hscontrol/types"
 
@@ -218,5 +219,38 @@ func TestCapabilitiesListsEveryGrantedCapability(t *testing.T) {
 				t.Errorf("%s is granted %s but Capabilities omits it", role, c)
 			}
 		}
+	}
+}
+
+// Anyone who can change the network needs a PIN; read-only roles never get
+// asked for one.
+func TestNeedsPin(t *testing.T) {
+	for role, want := range map[store.Role]bool{
+		store.RoleOwner: true, store.RoleAdmin: true, store.RoleNetworkAdmin: true,
+		store.RoleAuditor: false, store.RoleMember: false,
+	} {
+		if got := NeedsPin(role); got != want {
+			t.Errorf("NeedsPin(%s) = %v, want %v", role, got, want)
+		}
+	}
+}
+
+// A re-authentication proves identity only when the provider says the person
+// signed in just now. Missing auth_time is refused unless explicitly trusted
+// (the dev IdP never sends it).
+func TestReauthAccepted(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+
+	if !reauthAccepted(now.Add(-30*time.Second).Unix(), now, false) {
+		t.Error("a sign-in 30 s ago was refused")
+	}
+	if reauthAccepted(now.Add(-10*time.Minute).Unix(), now, false) {
+		t.Error("a sign-in 10 minutes ago was accepted")
+	}
+	if reauthAccepted(0, now, false) {
+		t.Error("a token without auth_time was accepted")
+	}
+	if !reauthAccepted(0, now, true) {
+		t.Error("trusting a missing auth_time did not accept it")
 	}
 }

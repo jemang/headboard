@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -28,6 +29,16 @@ type MeBody struct {
 	// Local is true for a password account. The UI uses it to decide whether
 	// to offer a password form or point at the identity provider.
 	Local bool `json:"local"`
+	// NeedsPin holds the app at the PIN setup screen: the role must have a
+	// sudo PIN and this account has none yet.
+	NeedsPin bool `json:"needsPin"`
+	// PinSet is whether this account has a sudo PIN at all.
+	PinSet bool `json:"pinSet"`
+	// SudoUntil is when sudo ends, absent when it is off.
+	SudoUntil *time.Time `json:"sudoUntil,omitempty"`
+	// ReauthFresh is true within five minutes of signing in again at the
+	// identity provider, which is what lets such an account set its PIN.
+	ReauthFresh bool `json:"reauthFresh"`
 }
 
 type meOutput struct {
@@ -108,7 +119,7 @@ func init() {
 			}
 		},
 		) (*struct{ Body MeBody }, error) {
-			p, err := require(ctx, auth.CapViewSelf)
+			p, err := requireSudo(ctx, auth.CapViewSelf)
 			if err != nil {
 				return nil, err
 			}
@@ -134,7 +145,7 @@ func init() {
 				return nil, statusFor(err, "could not change the password")
 			}
 
-			finish(ctx, deps, p, "account.password", "user", p.User.ID, nil, nil)
+			finish(ctx, deps, p, "account.password", "account", p.User.ID, p.User.Email, nil, nil)
 
 			return &struct{ Body MeBody }{Body: meBodyFor(p)}, nil
 		})
@@ -147,11 +158,20 @@ func meBodyFor(p auth.Principal) MeBody {
 		capabilities = auth.Capabilities(p.User.Role)
 	}
 
-	return MeBody{
+	body := MeBody{
 		User:         p.User,
 		Admission:    p.User.Admission,
 		Capabilities: capabilities,
 		Linked:       p.User.Linked(),
 		Local:        p.User.Local(),
+		NeedsPin:     auth.NeedsPin(p.User.Role) && p.User.PinHash == "",
+		PinSet:       p.User.PinHash != "",
+		ReauthFresh:  reauthFresh(p),
 	}
+	if !p.SudoUntil.IsZero() {
+		until := p.SudoUntil
+		body.SudoUntil = &until
+	}
+
+	return body
 }

@@ -103,7 +103,7 @@ func init() {
 			Summary:     "Add an SSH public key to a Headscale user",
 			Tags:        []string{"ssh"},
 		}, func(ctx context.Context, in *addSSHKeyInput) (*sshKeyOutput, error) {
-			p, err := require(ctx, auth.CapManageSSH)
+			p, err := requireSudo(ctx, auth.CapManageSSH)
 			if err != nil {
 				return nil, err
 			}
@@ -139,7 +139,7 @@ func init() {
 				return nil, statusFor(err, "could not add the key")
 			}
 
-			audit(ctx, deps, p, "ssh_key.add", "ssh_key", k.ID, nil, sshKeyView(k))
+			audit(ctx, deps, p, "ssh_key.add", "ssh_key", k.ID, k.Label, nil, sshKeyView(k))
 
 			return &sshKeyOutput{Body: sshKeyView(k)}, nil
 		})
@@ -151,7 +151,7 @@ func init() {
 			Summary:     "Remove an SSH public key",
 			Tags:        []string{"ssh"},
 		}, func(ctx context.Context, in *sshKeyIDInput) (*struct{}, error) {
-			p, err := require(ctx, auth.CapManageSSH)
+			p, err := requireSudo(ctx, auth.CapManageSSH)
 			if err != nil {
 				return nil, err
 			}
@@ -164,7 +164,7 @@ func init() {
 				return nil, statusFor(err, "could not remove the key")
 			}
 
-			audit(ctx, deps, p, "ssh_key.delete", "ssh_key", k.ID, sshKeyView(k), nil)
+			audit(ctx, deps, p, "ssh_key.delete", "ssh_key", k.ID, k.Label, sshKeyView(k), nil)
 
 			return nil, nil
 		})

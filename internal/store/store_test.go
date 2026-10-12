@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jemang/headboard/internal/store"
 )
@@ -155,6 +156,8 @@ func TestAdmissionMigrationMovesOnlyLegacyMembersToPending(t *testing.T) {
 			created_at TEXT NOT NULL,
 			last_login_at TEXT
 		);
+		-- 0001 also made audit_log; later migrations alter it.
+		CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT);
 	`)
 	if err != nil {
 		t.Fatalf("creating legacy schema: %v", err)
@@ -371,7 +374,234 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		t.Fatalf("counting migrations: %v", err)
 	}
 
-	if n != 3 {
-		t.Errorf("schema_migrations has %d rows after two opens, want 3", n)
+	files, _ := filepath.Glob("migrations/*.sql")
+	if n != len(files) {
+		t.Errorf("schema_migrations has %d rows after two opens, want one per file (%d)", n, len(files))
+	}
+}
+
+// The activity page filters by category (a family of actions such as every
+// key action) and by who did it; both must narrow the list, and paging must
+// continue past the last row shown.
+func TestListAuditFiltersByCategoryAndActor(t *testing.T) {
+	st := openStore(t)
+	ctx := t.Context()
+
+	for _, e := range []store.AuditEntry{
+		{ActorLabel: "a@example.com", Action: "apikey.create", TargetType: "apikey"},
+		{ActorLabel: "b@example.com", Action: "preauthkey.expire", TargetType: "preauthkey"},
+		{ActorLabel: "a@example.com", Action: "device.rename", TargetType: "device"},
+		{ActorLabel: "a@example.com", Action: "apikey.delete", TargetType: "apikey"},
+	} {
+		if err := st.Audit(ctx, e); err != nil {
+			t.Fatalf("Audit: %v", err)
+		}
+	}
+
+	keys, err := st.ListAudit(ctx, store.AuditFilter{Prefixes: []string{"apikey.", "preauthkey."}})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	if len(keys) != 3 {
+		t.Errorf("key category = %d entries, want 3", len(keys))
+	}
+
+	mine, err := st.ListAudit(ctx, store.AuditFilter{Prefixes: []string{"apikey."}, Actor: "a@example.com"})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	if len(mine) != 2 || mine[0].Action != "apikey.delete" {
+		t.Errorf("actor filter = %+v, want a's two apikey rows newest first", mine)
+	}
+
+	next, err := st.ListAudit(ctx, store.AuditFilter{Limit: 1, Before: mine[0].ID})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	if len(next) != 1 || next[0].Action != "device.rename" {
+		t.Errorf("page after the newest = %+v, want device.rename", next)
+	}
+}
+
+// The label is what the activity page names the target by. It must survive
+// the target itself: a deleted device has no name anywhere else.
+func TestAuditKeepsTheTargetLabel(t *testing.T) {
+	st := openStore(t)
+
+	if err := st.Audit(t.Context(), store.AuditEntry{Action: "device.delete", TargetType: "device", TargetID: "4", TargetLabel: "web-1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.ListAudit(t.Context(), store.AuditFilter{})
+	if err != nil || len(got) != 1 || got[0].TargetLabel != "web-1" {
+		t.Fatalf("entries = %+v, %v; want the label back", got, err)
+	}
+}
+
+// Five wrong PINs lock sudo, counted in the database so a restart or a second
+// tab does not reset the count; a right PIN or a new PIN clears it.
+func TestPinFailuresLockAndClear(t *testing.T) {
+	st := openStore(t)
+	ctx := t.Context()
+	u, err := st.UpsertLogin(ctx, identity("https://idp.example", "pin", "pin@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.SetPin(ctx, u.ID, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.UserByID(ctx, u.ID)
+	if got.PinHash != "hash" {
+		t.Fatalf("pin hash = %q", got.PinHash)
+	}
+
+	now := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)
+	var locked *time.Time
+	for i := 1; i <= 5; i++ {
+		var n int
+		n, locked, err = st.RecordPinFailure(ctx, u.ID, 5, 15*time.Minute, now)
+		if err != nil || n != i {
+			t.Fatalf("failure %d: n=%d err=%v", i, n, err)
+		}
+		if i < 5 && locked != nil {
+			t.Fatalf("locked after %d failures", i)
+		}
+	}
+	if locked == nil || !locked.Equal(now.Add(15*time.Minute)) {
+		t.Fatalf("locked until %v, want 15 minutes after the fifth failure", locked)
+	}
+
+	got, _ = st.UserByID(ctx, u.ID)
+	if got.PinLockedUntil == nil {
+		t.Error("lock not stored on the account")
+	}
+
+	if err := st.ResetPinFailures(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = st.UserByID(ctx, u.ID)
+	if got.PinLockedUntil != nil || got.PinFailures != 0 {
+		t.Errorf("after reset: failures=%d locked=%v", got.PinFailures, got.PinLockedUntil)
+	}
+
+	if err := st.ResetPin(ctx, u.ID, store.AuditEntry{ActorLabel: "cli", Action: "account.pin_reset", TargetType: "account"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.UserByID(ctx, u.ID); got.PinHash != "" {
+		t.Error("ResetPin left a hash")
+	}
+}
+
+// The reset command must not create a database nor migrate one: it runs next
+// to a live server, and a wrong path should fail loudly, not start empty.
+func TestOpenExistingNeverCreatesOrMigrates(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope.db")
+	if _, err := store.OpenExisting(t.Context(), missing); err == nil {
+		t.Error("opened a database that does not exist")
+	}
+
+	path := filepath.Join(t.TempDir(), "h.db")
+	st, err := store.Open(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	again, err := store.OpenExisting(t.Context(), path)
+	if err != nil {
+		t.Fatalf("OpenExisting on a migrated database: %v", err)
+	}
+	again.Close()
+
+	stale := filepath.Join(t.TempDir(), "stale.db")
+	db, _ := sql.Open("sqlite", stale)
+	_, _ = db.Exec(`CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT); INSERT INTO schema_migrations (name) VALUES ('0001_init.sql')`)
+	db.Close()
+	if _, err := store.OpenExisting(t.Context(), stale); err == nil {
+		t.Error("opened a database whose schema is behind this binary")
+	}
+}
+
+func TestBumpCredVersion(t *testing.T) {
+	st := openStore(t)
+	u, _ := st.UpsertLogin(t.Context(), identity("https://idp.example", "v", "v@example.com"))
+
+	if err := st.BumpCredVersion(t.Context(), u.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.UserByID(t.Context(), u.ID)
+	if got.CredVersion != u.CredVersion+1 {
+		t.Errorf("cred version %d, want %d", got.CredVersion, u.CredVersion+1)
+	}
+
+	same, err := st.UsersByEmail(t.Context(), "V@example.com")
+	if err != nil || len(same) != 1 || same[0].ID != u.ID {
+		t.Errorf("UsersByEmail = %v, %v", same, err)
+	}
+}
+
+func TestSudoGrants(t *testing.T) {
+	st := openStore(t)
+	u, _ := st.UpsertLogin(t.Context(), identity("https://idp.example", "s", "s@example.com"))
+	now := time.Now()
+
+	if err := st.GrantSudo(t.Context(), "tok", u.ID, now.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if until, ok := st.SudoUntil(t.Context(), "tok", u.ID, now); !ok || until.Before(now) {
+		t.Errorf("grant not found: %v %v", until, ok)
+	}
+	if _, ok := st.SudoUntil(t.Context(), "tok", u.ID+1, now); ok {
+		t.Error("a grant answered for another account")
+	}
+	if _, ok := st.SudoUntil(t.Context(), "tok", u.ID, now.Add(6*time.Minute)); ok {
+		t.Error("an expired grant still counts")
+	}
+	if err := st.EndSudo(t.Context(), "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.SudoUntil(t.Context(), "tok", u.ID, now); ok {
+		t.Error("an ended grant still counts")
+	}
+}
+
+// A reset changes the credential, signs the account out and records itself in
+// one transaction: no crash between them can leave old sessions working.
+func TestResetCredentialIsOneTransaction(t *testing.T) {
+	st := openStore(t)
+	u, err := st.CreateLocalOwner(t.Context(), "ops@example.com", "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = st.SetPin(t.Context(), u.ID, "pin")
+	entry := func(action string) store.AuditEntry {
+		return store.AuditEntry{ActorLabel: "cli", Action: action, TargetType: "account", TargetLabel: u.Email}
+	}
+
+	if err := st.ResetPassword(t.Context(), u.ID, "new", entry("account.password_reset")); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ResetPin(t.Context(), u.ID, entry("account.pin_reset")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := st.UserByID(t.Context(), u.ID)
+	if got.PasswordHash != "new" || got.PinHash != "" || got.CredVersion != u.CredVersion+2 {
+		t.Errorf("after resets: hash=%q pin=%q version=%d", got.PasswordHash, got.PinHash, got.CredVersion)
+	}
+	if e, _ := st.ListAudit(t.Context(), store.AuditFilter{Prefixes: []string{"account."}}); len(e) != 2 {
+		t.Errorf("audit rows = %d, want 2", len(e))
+	}
+
+	// A failed audit write must undo the reset with it.
+	bad := entry("account.pin_reset")
+	missing := int64(999)
+	bad.ActorUserID = &missing
+	if err := st.ResetPin(t.Context(), u.ID, bad); err == nil {
+		t.Fatal("a reset with an unwritable audit row succeeded")
+	}
+	if after, _ := st.UserByID(t.Context(), u.ID); after.CredVersion != got.CredVersion {
+		t.Error("the version moved although the reset failed")
 	}
 }
