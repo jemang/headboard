@@ -1,6 +1,7 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { CheckCircle2, X, AlertTriangle } from 'lucide-react'
 import { cn } from '../lib/cn'
+import { ToastContext, type ToastApi } from './toastContext'
 
 type Tone = 'ok' | 'error'
 
@@ -10,20 +11,6 @@ interface Toast {
   message: string
 }
 
-interface ToastApi {
-  /** Confirm something happened. Dismisses itself. */
-  ok: (message: string) => void
-
-  /** Report a failure. Stays until dismissed — see below. */
-  error: (error: unknown) => void
-}
-
-const ToastContext = createContext<ToastApi>({ ok: () => {}, error: () => {} })
-
-/** Announce the outcome of an action. */
-export function useToast() {
-  return useContext(ToastContext)
-}
 
 /**
  * Toasts for the results of actions — saved, renamed, expired, failed.

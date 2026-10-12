@@ -19,4 +19,19 @@ describe('TagSelector', () => {
 
     expect(markup).toContain('Define and save a tag owner in Access control before registering a tagged server.')
   })
+
+  it('accepts copy for picking people instead of tags', () => {
+    const markup = renderToStaticMarkup(
+      <TagSelector
+        tags={['alice']}
+        value={[]}
+        onChange={() => {}}
+        placeholder="Find a person…"
+        searchLabel="Find Headscale users"
+        emptyHint="Create a Headscale user first."
+      />,
+    )
+    expect(markup).toContain('Find a person…')
+    expect(markup).toContain('Find Headscale users')
+  })
 })

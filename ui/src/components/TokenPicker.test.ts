@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Tokens } from '../lib/api'
-import { validateTokens } from './TokenPicker'
+import { validateTokens } from '../lib/tokenValidation'
 
 const tokens: Tokens = {
   users: ['ali@'],

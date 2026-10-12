@@ -321,6 +321,53 @@ export interface ApiKey {
   lastSeen?: string
 }
 
+export interface SshKey {
+  id: number
+  headscaleUserId: number
+  type: string
+  fingerprint: string
+  label: string
+  createdAt: string
+}
+
+export type SshBindingState = 'active' | 'suspended' | 'orphan'
+
+export interface SshServer {
+  name: string
+  ip: string
+  binding?: {
+    agentId: number
+    agentName: string
+    targetRef: string
+    approvedIp: string
+    approvedLabel: string
+    state: SshBindingState
+    reapprovable: boolean
+  }
+  suggestions: { agentId: number; agentName: string; targetRef: string; hostname: string; ambiguous: boolean }[]
+  rows: { unixUser: string; users: { id: number; name: string; keys: number; missing: boolean }[]; warnings: string[] }[]
+  pendingClears: string[]
+}
+
+export interface SshAccess {
+  servers: SshServer[]
+  orphans: { hostName: string; unixUsers: string[]; bound: boolean }[]
+}
+
+export interface SshAgent {
+  id: number
+  name: string
+  mode: string
+  version: string
+  versionMatch: boolean
+  online: boolean
+  lastSeenAt?: string
+  discovered: { ref: string; hostname: string; ips?: string[] }[]
+  warnings: { ref: string; unix_user?: string; message: string }[]
+  bindings: number
+  pendingClears: number
+}
+
 // ------------------------------------------------------------- endpoints ---
 
 export const api = {
@@ -387,4 +434,20 @@ export const api = {
   rejectRegistration: (authId: string) =>
     send<{ approved: boolean }>('POST', '/api/registrations/reject', { authId }),
   registrationInfo: () => request<{ headscalePublicUrl: string }>('/api/registrations/info'),
+  sshKeys: (userId: number) => request<{ keys: SshKey[] }>(`/api/users/${userId}/ssh-keys`),
+  addSshKey: (userId: number, publicKey: string, label: string) =>
+    send<SshKey>('POST', `/api/users/${userId}/ssh-keys`, { publicKey, label }),
+  deleteSshKey: (id: number) => send<void>('DELETE', `/api/ssh-keys/${id}`),
+  sshAccess: () => request<SshAccess>('/api/ssh/access'),
+  setSshRow: (host: string, unixUser: string, userIds: number[]) =>
+    send<void>('PUT', `/api/ssh/access/${encodeURIComponent(host)}/${encodeURIComponent(unixUser)}`, { userIds }),
+  approveSshTarget: (host: string, agentId: number, targetRef: string) =>
+    send<void>('POST', `/api/ssh/targets/${encodeURIComponent(host)}`, { agentId, targetRef }),
+  unbindSshTarget: (host: string) => send<void>('DELETE', `/api/ssh/targets/${encodeURIComponent(host)}`),
+  removeSshOrphan: (host: string) => send<void>('DELETE', `/api/ssh/access/${encodeURIComponent(host)}`),
+  sshAgents: () => request<{ agents: SshAgent[] }>('/api/ssh/agents'),
+  createSshAgent: (name: string) => send<{ agent: SshAgent; token: string }>('POST', '/api/ssh/agents', { name }),
+  rotateSshAgent: (id: number) => send<{ token: string }>('POST', `/api/ssh/agents/${id}/rotate`),
+  revokeSshAgent: (id: number, force = false) =>
+    send<{ cleanup: string[] }>('DELETE', `/api/ssh/agents/${id}${force ? '?force=true' : ''}`),
 }

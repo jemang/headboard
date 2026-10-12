@@ -62,7 +62,9 @@ services:
       # Permit local HTTP but serve the UI built into this image; Vite is not
       # a separate process inside the container.
       HEADBOARD_DEV_UI_PROXY: ""
-      HEADBOARD_PUBLIC_URL: http://${HOST_IP:-127.0.0.1}:3000
+      # Override with an https address (a reverse proxy in front of :3000) to
+      # test the SSH key agent, which refuses plain http.
+      HEADBOARD_PUBLIC_URL: ${HEADBOARD_PUBLIC_URL:-http://${HOST_IP:-127.0.0.1}:3000}
       OIDC_ISSUER: http://${HOST_IP:-127.0.0.1}:9998/oidc
       OIDC_CLIENT_ID: headboard-dev
       OIDC_CLIENT_SECRET: headboard-dev-secret

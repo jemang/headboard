@@ -11,7 +11,8 @@ import {
 } from '../lib/api'
 import { Badge, Button, Empty, ErrorNote, Input, Section, Status } from '../components/ui'
 import { FlaskConical, Play, Plus, Radar, Trash2 } from 'lucide-react'
-import { TokenPicker, validateTokens } from '../components/TokenPicker'
+import { TokenPicker } from '../components/TokenPicker'
+import { validateTokens } from '../lib/tokenValidation'
 import { schemaWithPendingChanges } from '../lib/policyDraft'
 import { simulationRequest, testDestinationIssue } from '../lib/grantEditor'
 

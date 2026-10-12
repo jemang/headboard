@@ -270,6 +270,7 @@ export function Confirm({
   confirmLabel,
   onConfirm,
   onCancel,
+  busy = false,
 }: {
   open: boolean
   title: string
@@ -277,6 +278,8 @@ export function Confirm({
   confirmLabel: string
   onConfirm: () => void
   onCancel: () => void
+  /** The confirmed request is running; a second click would send it again. */
+  busy?: boolean
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null)
 
@@ -318,7 +321,7 @@ export function Confirm({
           >
             Cancel
           </button>
-          <Button variant="danger" onClick={onConfirm}>
+          <Button variant="danger" onClick={onConfirm} disabled={busy}>
             {confirmLabel}
           </Button>
         </div>

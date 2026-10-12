@@ -302,6 +302,54 @@ For an existing deployment, complete this cutover deliberately:
 
 Press <kbd>⌘K</kbd> for pages and devices.
 
+## SSH key sync
+
+Headboard can put people's SSH public keys on your servers, including Proxmox
+containers behind one subnet-router node, and take them off again.
+
+1. **Keys**: People → open a person → *SSH keys*. Paste a public key and a label.
+   Keys belong to a Headscale user, and only owners and admins manage them.
+2. **Servers**: any single-IP entry in Access control → *Hosts* (for example
+   `app-1` → `192.0.2.10`).
+3. **Agent**: SSH access → *Agents* → *Add agent*. Paste the one-line command it
+   shows, as root, on the Proxmox host (it reaches every container through `pct`)
+   or on a plain server (it manages only that machine). Headboard must be reached
+   over **https**; the installer and agent refuse plain http.
+4. **Approve**: once the agent reports a container whose IP matches a host, the
+   server card offers *Approve*. Nothing is written before an admin approves it.
+5. **Assign**: add a unix user row (`deploy`, `sysadmin`…) and pick people. Every
+   key of each person is written to that user's `authorized_keys` within about a
+   minute. Removing them clears it the same way.
+
+Only a marked block is managed; keys you added by hand outside it are left
+alone:
+
+```
+# BEGIN headboard (managed — do not edit)
+ssh-ed25519 AAAA… alice laptop
+# END headboard
+```
+
+Things to know:
+
+- The agent never creates unix accounts; the user must already exist.
+- File work inside a target runs as that unix user (`setpriv`, or `su` where
+  `setpriv` is missing), never as root.
+- If a host's IP changes in the policy, or a container's hostname or address no
+  longer matches what was approved, the server is **suspended**: nothing is
+  written or cleared until it is approved again.
+- To retire an agent, unbind its servers and wait for *Clearing* to finish, then
+  revoke it. A forced revoke leaves keys behind and shows the commands to remove
+  them by hand.
+- `headboard-agent update` (as root) fetches the agent from the Headboard it is
+  configured for and restarts the service. `headboard-agent uninstall` first
+  removes every key block it wrote and has Headboard delete the agent, then
+  removes the binary, its token and the service. If a block cannot be removed
+  (a stopped container, say) it stops and changes nothing; `--force` removes
+  the agent anyway and leaves the keys for Headboard's revoke cleanup.
+- IPv4 servers and LXC containers only for now. VMs, which would need the guest
+  agent, are not supported.
+
 ## Develop
 
 The UI is embedded into the binary at compile time, so a source build needs the UI built first:

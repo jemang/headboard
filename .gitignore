@@ -25,3 +25,11 @@ node_modules/
 # Visual brainstorming artifacts
 .superpowers/
 .codegraph/
+
+# Local working notes: real hostnames, IPs and policies; never publish.
+.doc/
+handoff.md
+todo.txt
+sample-acl.json
+docs/superpowers/
+.claude/

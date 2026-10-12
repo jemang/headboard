@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Me } from '../lib/api'
-import { useRouter } from '../lib/router'
+import { useRouter } from '../lib/routerContext'
 import type { Theme } from '../lib/theme'
+import { paletteDestinations } from '../lib/paletteDestinations'
 
 interface Command {
   id: string
@@ -62,26 +63,13 @@ export function Palette({
     if (open) inputRef.current?.focus()
   }, [open])
 
-  const can = (c: string) => me.capabilities.includes(c)
-
   const commands = useMemo<Command[]>(() => {
-    const go = (to: string) => () => navigate(to)
-
-    const pages: Command[] = [
-      {
-        id: 'devices',
-        label: can('view:all') ? 'Devices' : 'My devices',
-        group: 'Go to',
-        run: go('/devices'),
-      },
-      { id: 'keys', label: 'Keys', group: 'Go to', run: go('/keys') },
-    ]
-
-    if (can('manage:policy'))
-      pages.splice(1, 0, { id: 'acl', label: 'Access control', group: 'Go to', run: go('/acl') })
-
-    if (can('manage:users'))
-      pages.push({ id: 'people', label: 'People', group: 'Go to', run: go('/people') })
+    const pages: Command[] = paletteDestinations(me.capabilities).map((d) => ({
+      id: d.id,
+      label: d.label,
+      group: 'Go to',
+      run: () => navigate(d.to),
+    }))
 
     const machines: Command[] = (devices.data?.devices ?? []).map((d) => ({
       id: `device-${d.id}`,

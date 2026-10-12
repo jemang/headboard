@@ -4,8 +4,10 @@ import { api, type Account, type Device, type Me, type Role, type TailnetUser } 
 import { Badge, Button, Confirm, Drawer, Empty, ErrorNote, Input, Mono, Section, Status } from '../components/ui'
 import { Cell, Row, SpanRow, Table } from '../components/Table'
 import { Loading, SkeletonRows } from '../components/Skeleton'
-import { useToast } from '../components/Toast'
+import { useToast } from '../components/toastContext'
 import { Check, KeyRound, Pencil, ShieldCheck, Trash2, UserPlus, Users, X } from 'lucide-react'
+import { SshKeysSection } from '../components/SshKeysSection'
+import { duplicateAccountEmails } from '../lib/duplicateAccountEmails'
 import { expiryFromDays, isExpired } from '../lib/apiKeyControls'
 import { preAuthHardening } from '../lib/preAuthHardening'
 import { serverRegistrationCommand, type ServerRegistrationKind } from '../lib/serverRegistrationCommand'
@@ -90,6 +92,7 @@ export function People({ me }: { me: Me }) {
   if (users.error) return <ErrorNote error={users.error} />
 
   const duplicateNames = duplicateUserNames(users.data?.users ?? [])
+  const duplicateEmails = duplicateAccountEmails(accounts.data?.accounts ?? [])
 
   return (
     <div className="space-y-6">
@@ -120,7 +123,10 @@ export function People({ me }: { me: Me }) {
                   <Row key={a.id}>
                     <Cell>
                       <div className="font-medium">{a.displayName || a.email}</div>
-                      <div className="text-xs text-muted-foreground">{a.email}</div>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        {a.email}
+                        {duplicateEmails.has(a.email.toLowerCase()) && <Badge tone="danger">duplicate email</Badge>}
+                      </div>
                     </Cell>
                     <Cell>
                       <div className="flex flex-wrap items-center gap-2"><Badge tone={a.admission === 'active' ? 'accent' : a.admission === 'pending' ? 'warn' : 'danger'}>{a.admission}</Badge>
@@ -228,6 +234,7 @@ export function People({ me }: { me: Me }) {
         link={link}
         onDelete={(u) => setDeleteTarget(u)}
         onClose={() => setSelectedUserID(null)}
+        canManageSsh={me.capabilities.includes('manage:ssh')}
       />
 
       <Confirm
@@ -259,6 +266,7 @@ function UserDrawer({
   link,
   onDelete,
   onClose,
+  canManageSsh,
 }: {
   user: TailnetUser | undefined
   duplicateName: boolean
@@ -271,6 +279,7 @@ function UserDrawer({
   link: { mutate: (vars: { id: number; hsID: number | null }) => void }
   onDelete: (user: TailnetUser) => void
   onClose: () => void
+  canManageSsh: boolean
 }) {
   const [renaming, setRenaming] = useState<string | null>(null)
 
@@ -356,6 +365,8 @@ function UserDrawer({
               </Button>
             </div>
           </Section>
+
+          {canManageSsh && <SshKeysSection userId={user.id} userName={user.name} />}
 
           <Section title="Devices">
             <OwnerDevices name={user.name} devices={devices} pending={devicesPending} error={devicesError} />
@@ -473,7 +484,8 @@ export function Keys({ me }: { me: Me }) {
     onSuccess: (result) => {
       setConfirmRevokeKeys(false)
       void qc.invalidateQueries({ queryKey: ['preauth-keys'] })
-      result.failed.length ? toast.error(`${result.failed.length} key revocations failed`) : toast.ok(`${result.expired.length} active pre-auth keys revoked`)
+      if (result.failed.length) toast.error(`${result.failed.length} key revocations failed`)
+      else toast.ok(`${result.expired.length} active pre-auth keys revoked`)
     },
     onError: toast.error,
   })

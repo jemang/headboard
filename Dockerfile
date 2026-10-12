@@ -21,7 +21,7 @@ RUN pnpm build
 # Pinned to the patch. Headscale is a compile-time dependency here, not just an
 # HTTP peer, and its toolchain requirement is exact — a floating 1.26-alpine
 # would silently move underneath a release build.
-FROM --platform=$BUILDPLATFORM golang:1.26.5-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine AS build
 WORKDIR /src
 # Dependencies are their own layer so source edits do not re-download the
 # Headscale tree, which is large.
@@ -41,6 +41,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION}" \
     -o /out/headboard ./cmd/headboard
+
+# The SSH key agent runs on Proxmox hosts and servers, not in this container.
+# Both architectures are built here and served by Headboard, so an installed
+# agent always comes from the same release as the server it talks to.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    for arch in amd64 arm64; do \
+      CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
+        -ldflags "-s -w -X main.version=${VERSION}" \
+        -o /out/agent/headboard-agent-linux-$arch ./cmd/headboard-agent || exit 1; \
+    done
 
 FROM alpine:3.22
 
@@ -63,6 +74,7 @@ RUN apk add --no-cache ca-certificates tzdata \
     && adduser -D -u 10001 headboard \
     && mkdir -p /data && chown headboard /data
 COPY --from=build /out/headboard /usr/local/bin/headboard
+COPY --from=build /out/agent /usr/local/share/headboard/agent
 USER headboard
 
 # Accounts, sessions, the audit log and policy history live here. Mount it, or

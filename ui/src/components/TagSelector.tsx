@@ -4,10 +4,16 @@ export function TagSelector({
   tags,
   value,
   onChange,
+  placeholder = 'Find a saved tag…',
+  searchLabel = 'Find tags declared in tag owners',
+  emptyHint = 'Define and save a tag owner in Access control before registering a tagged server.',
 }: {
   tags: string[]
   value: string[]
   onChange: (tags: string[]) => void
+  placeholder?: string
+  searchLabel?: string
+  emptyHint?: string
 }) {
   const [draft, setDraft] = useState('')
   const [open, setOpen] = useState(false)
@@ -30,7 +36,7 @@ export function TagSelector({
   if (tags.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        Define and save a tag owner in Access control before registering a tagged server.
+        {emptyHint}
       </p>
     )
   }
@@ -53,8 +59,8 @@ export function TagSelector({
       <input
         ref={inputRef}
         value={draft}
-        placeholder={value.length === 0 ? 'Find a saved tag…' : ''}
-        aria-label="Find tags declared in tag owners"
+        placeholder={value.length === 0 ? placeholder : ''}
+        aria-label={searchLabel}
         onChange={(event) => {
           setDraft(event.target.value)
           setOpen(true)

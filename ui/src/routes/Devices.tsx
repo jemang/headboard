@@ -4,7 +4,7 @@ import { api, type Device, type DeviceRules, type EffectiveRule, type Me } from 
 import { Badge, Button, Confirm, Drawer, Empty, ErrorNote, Input, Mono, Section, Status } from '../components/ui'
 import { Cell, Row, SpanRow, Table } from '../components/Table'
 import { Loading, Skeleton, SkeletonRows } from '../components/Skeleton'
-import { useToast } from '../components/Toast'
+import { useToast } from '../components/toastContext'
 import { devicePulse } from '../lib/devicePulse'
 import { accessibleDevices, ownedDevices, type AccessibleDevice } from '../lib/deviceAccess'
 import { approveRoutes, revokeRoutes, routeSummary } from '../lib/deviceRouting'
@@ -37,7 +37,7 @@ export function Devices({
   const devices = useQuery({ queryKey: ['devices'], queryFn: api.devices })
 
   const admin = me.capabilities.includes('view:all')
-  const all = devices.data?.devices ?? []
+  const all = useMemo(() => devices.data?.devices ?? [], [devices.data])
   const mine = useMemo(() => ownedDevices(all), [all])
   const policyQueries = useQueries({
     queries: !admin && me.linked

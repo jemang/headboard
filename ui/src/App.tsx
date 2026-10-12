@@ -4,17 +4,19 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, type Health, type Me } from './lib/api'
 import { connectionPresentation } from './lib/headscaleConnection'
 import { admissionPresentation } from './lib/accountAdmission'
-import { Link, Router, useRouter } from './lib/router'
+import { Link, Router } from './lib/router'
+import { useRouter } from './lib/routerContext'
 import { useTheme, type Theme } from './lib/theme'
 import { Palette } from './components/Palette'
 import { Button, ErrorNote } from './components/ui'
 import { ToastHost } from './components/Toast'
-import { CircleHelp, KeyRound, Laptop, LogOut, Menu, Moon, ShieldCheck, Sun, Users, X } from 'lucide-react'
+import { CircleHelp, KeyRound, KeySquare, Laptop, LogOut, Menu, Moon, ShieldCheck, Sun, Users, X } from 'lucide-react'
 import { Devices } from './routes/Devices'
 import { Acl } from './routes/Acl'
 import { Keys, People } from './routes/Admin'
 import { Account } from './routes/Account'
 import { Help } from './routes/Help'
+import { SshRoute } from './routes/SshAccess'
 import { BrandMark } from './components/BrandMark'
 
 export function App() {
@@ -60,7 +62,7 @@ function Shell() {
 
   if (!admission.canUseApp) return <AdmissionScreen email={user.user.email} title={admission.title} detail={admission.detail} />
 
-  const known = ['/', '/devices', '/acl', '/people', '/keys', '/help', '/account']
+  const known = ['/', '/devices', '/acl', '/people', '/ssh', '/keys', '/help', '/account']
 
   return (
     <div className="min-h-dvh">
@@ -89,6 +91,7 @@ function Shell() {
           <VersionBanner />
           {path === '/acl' && <Acl />}
           {path === '/people' && <People me={user} />}
+          {path === '/ssh' && <SshRoute capabilities={user.capabilities} />}
           {path === '/keys' && <Keys me={user} />}
           {path === '/help' && (
             user.capabilities.includes('manage:devices')
@@ -185,6 +188,7 @@ function Nav({
     { to: '/devices', label: can('view:all') ? 'Devices' : 'My devices', icon: Laptop, show: true },
     { to: '/acl', label: 'Access control', icon: ShieldCheck, show: can('manage:policy') },
     { to: '/people', label: 'People', icon: Users, show: can('manage:users') },
+    { to: '/ssh', label: 'SSH access', icon: KeySquare, show: can('manage:ssh') },
     { to: '/keys', label: 'Keys', icon: KeyRound, show: true },
     { to: '/help', label: 'Help', icon: CircleHelp, show: can('manage:devices') },
   ].filter((l) => l.show)

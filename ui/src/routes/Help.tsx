@@ -133,7 +133,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="block space-y-1"><span className="text-xs text-muted-foreground">{label}</span>{children}</label>
 }
 
-function CommandCard({
+export function CommandCard({
   title,
   description,
   command,
@@ -160,7 +160,7 @@ function CommandCard({
       {command ? (
         <div className="flex items-center gap-2 rounded-md bg-surface-2 px-2 py-1.5">
           <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs">{command}</code>
-          <Mono compact label={`${title.toLowerCase()} command`} value={command} className="shrink-0 border border-border px-2 py-1.5" />
+          <Mono compact label={/command$/i.test(title) ? title.toLowerCase() : `${title.toLowerCase()} command`} value={command} className="shrink-0 border border-border px-2 py-1.5" />
         </div>
       ) : <p className="text-xs text-muted-foreground">{pending ? 'Loading the Headscale address…' : emptyHint}</p>}
       <p className="text-xs leading-5 text-muted-foreground">{note}</p>

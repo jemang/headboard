@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { stripBase, withBase } from './basePath'
+import { RouterContext, useRouter } from './routerContext'
 
 /**
  * A ~50-line router, deliberately.
@@ -9,13 +10,6 @@ import { stripBase, withBase } from './basePath'
  * and the plan's choice of TanStack Router was made before the route list was.
  * If routes start nesting, replace this — the surface is Link and useRoute.
  */
-
-interface RouterValue {
-  path: string
-  navigate: (to: string, opts?: { replace?: boolean }) => void
-}
-
-const RouterContext = createContext<RouterValue>({ path: '/', navigate: () => {} })
 
 export function Router({ children }: { children: ReactNode }) {
   // Routes are written without the deployment's base path, so a route table
@@ -39,10 +33,6 @@ export function Router({ children }: { children: ReactNode }) {
   }, [])
 
   return <RouterContext value={{ path, navigate }}>{children}</RouterContext>
-}
-
-export function useRouter() {
-  return useContext(RouterContext)
 }
 
 export function Link({

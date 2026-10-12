@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { api, type Me } from '../lib/api'
 import { Button, ErrorNote, Section, Status } from '../components/ui'
-import { useToast } from '../components/Toast'
+import { useToast } from '../components/toastContext'
 import { KeyRound } from 'lucide-react'
 
 /**
