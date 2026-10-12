@@ -141,3 +141,14 @@ export function withRow(access: SshAccess, host: string, unixUser: string, ids: 
     }),
   }
 }
+
+/**
+ * The picker offers only people who hold an SSH key: assigning someone with no
+ * key gives them nothing to log in with. A missing count (older server) is
+ * treated as able to log in rather than hiding everyone.
+ */
+export function pickableTokens(tokens: Map<string, number>, users: { id: number; name?: string; keys?: number }[]): string[] {
+  const withKeys = new Set(users.filter((u) => u.keys === undefined || u.keys > 0).map((u) => u.id))
+
+  return [...tokens].filter(([, id]) => withKeys.has(id)).map(([token]) => token)
+}

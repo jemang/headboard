@@ -17,13 +17,25 @@ export class ApiError extends Error {
   }
 }
 
+/** The request never reached the server: offline, DNS, a dropped connection. */
+export class NetworkError extends Error {
+  constructor() {
+    super('Could not reach Headboard')
+    this.name = 'NetworkError'
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // Every call goes through here, so prefixing once is what lets the rest of
   // the client keep writing "/api/devices" while the app is served at /manage.
+  // fetch rejects only when the request never got an answer; naming that apart
+  // from a TypeError in our own code is what the offline screen keys on.
   const res = await fetch(withBase(path), {
     credentials: 'same-origin',
     headers: { Accept: 'application/json', ...init?.headers },
     ...init,
+  }).catch(() => {
+    throw new NetworkError()
   })
 
   if (!res.ok) {
@@ -352,6 +364,8 @@ export interface SshServer {
 export interface SshAccess {
   servers: SshServer[]
   orphans: { hostName: string; unixUsers: string[]; bound: boolean }[]
+  /** Every Headscale user with their SSH key count. */
+  people?: { id: number; name: string; keys: number }[]
 }
 
 export interface SshAgent {

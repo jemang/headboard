@@ -1,40 +1,39 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Device, type DeviceRules, type EffectiveRule, type Me } from '../lib/api'
-import { Badge, Button, Confirm, Drawer, Empty, ErrorNote, Input, Mono, Section, Status } from '../components/ui'
+import { Badge, Button, Confirm, Drawer, Empty, ErrorNote, Input, Mono, Section, Status, IconButton } from '../components/ui'
 import { Cell, Row, SpanRow, Table } from '../components/Table'
+import { CardList, ListRow } from '../components/ListRow'
+import { HealthBand } from '../components/HealthBand'
+import { NeedsList } from '../components/NeedsList'
 import { Loading, Skeleton, SkeletonRows } from '../components/Skeleton'
 import { useToast } from '../components/toastContext'
 import { devicePulse } from '../lib/devicePulse'
 import { accessibleDevices, ownedDevices, type AccessibleDevice } from '../lib/deviceAccess'
 import { approveRoutes, revokeRoutes, routeSummary } from '../lib/deviceRouting'
+import { boardRows, FILTERS, SORTS, type DeviceFilter, type DeviceSort } from '../lib/board'
+import type { NeedItem } from '../lib/needs'
+import { Link } from '../lib/router'
+import { useRouter } from '../lib/routerContext'
+import { MD, XL, useMediaQuery } from '../lib/useMediaQuery'
+import { useStatusFlips, type FlipField } from '../lib/statusFlip'
+import { useHashScroll } from '../lib/useHashScroll'
+import { FlipStatus } from '../components/FlipStatus'
+import { Tabs } from '../components/Tabs'
 import { Laptop, Search, Trash2, Pencil, TimerReset, Check, X, Tag } from 'lucide-react'
 import { cn } from '../lib/cn'
 
-export function Devices({
-  me,
-  focus,
-  onFocused,
-}: {
-  me: Me
-  /** A device the palette asked to open, or null. */
-  focus?: number | null
-  onFocused?: () => void
-}) {
-  const [selected, setSelected] = useState<number | null>(null)
-  const [filter, setFilter] = useState('')
-  const [onlineOnly, setOnlineOnly] = useState(false)
-
-  // Cleared as soon as it is consumed, so closing the drawer and pressing ⌘K
-  // for the same machine opens it again rather than doing nothing.
-  useEffect(() => {
-    if (focus == null) return
-
-    setSelected(focus)
-    onFocused?.()
-  }, [focus, onFocused])
+export function Devices({ me, needs }: { me: Me; needs: NeedItem[] }) {
+  const { search, navigate } = useRouter()
+  const selected = Number(search.get('device')) || null
+  const section = search.get('section')
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<DeviceFilter>('all')
+  const [sort, setSort] = useState<DeviceSort>('name')
+  const wide = useMediaQuery(MD)
 
   const devices = useQuery({ queryKey: ['devices'], queryFn: api.devices })
+  const health = useQuery({ queryKey: ['health'], queryFn: api.health })
 
   const admin = me.capabilities.includes('view:all')
   const all = useMemo(() => devices.data?.devices ?? [], [devices.data])
@@ -46,34 +45,22 @@ export function Devices({
   })
   const policyByDevice = useMemo(() => {
     const rules = new Map<number, DeviceRules>()
-    for (const [index, query] of policyQueries.entries()) {
-      if (query.data && mine[index]) rules.set(mine[index].id, query.data)
+    for (const [index, q] of policyQueries.entries()) {
+      if (q.data && mine[index]) rules.set(mine[index].id, q.data)
     }
     return rules
   }, [mine, policyQueries])
   const accessible = useMemo(() => accessibleDevices(mine, policyByDevice), [mine, policyByDevice])
   const pulse = devicePulse(admin ? all : mine)
+  const flips = useStatusFlips(devices.data?.devices, me.user.id)
 
-  const rows = useMemo(() => {
-    const q = filter.toLowerCase()
-
-    return all.filter((d) => {
-      if (onlineOnly && !d.online) return false
-      if (q === '') return true
-
-      return (
-        d.name.toLowerCase().includes(q) ||
-        (d.owner ?? '').toLowerCase().includes(q) ||
-        (d.tags ?? []).some((t) => t.toLowerCase().includes(q)) ||
-        d.ips.some((ip) => ip.includes(q))
-      )
-    })
-  }, [all, filter, onlineOnly])
+  const rows = useMemo(() => boardRows(all, query, filter, sort), [all, query, filter, sort])
 
   const accessibleRows = useMemo(() => {
-    const q = filter.toLowerCase()
+    const q = query.trim().toLowerCase()
     return accessible.filter((device) => {
-      if (onlineOnly && !device.online) return false
+      if (filter === 'online' && !device.online) return false
+      if (filter === 'offline' && device.online) return false
       if (q === '') return true
 
       return (
@@ -83,42 +70,29 @@ export function Devices({
         device.sources.some((source) => source.toLowerCase().includes(q))
       )
     })
-  }, [accessible, filter, onlineOnly])
-  const policyError = policyQueries.find((query) => query.error)?.error
-  const policyPending = policyQueries.some((query) => query.isPending)
+  }, [accessible, query, filter])
+  const policyError = policyQueries.find((q) => q.error)?.error
+  const policyPending = policyQueries.some((q) => q.isPending)
 
-  if (devices.error) return <ErrorNote error={devices.error} />
+  // #needs is reached from the top bar and the health band.
+  useHashScroll(needs.length)
+
+  const open = (id: number) => navigate(`/devices?device=${id}`)
+  const close = () => navigate('/devices', { replace: true })
+  const filtered = query !== '' || filter !== 'all'
+  const missing = selected !== null && devices.isSuccess && !all.some((d) => d.id === selected)
+
+  if (devices.error && !devices.data) return <ErrorNote error={devices.error} />
 
   return (
-    <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Tailnet inventory</p>
-          <h1 className="mt-1 text-display font-semibold">Devices</h1>
-          <p className="text-sm text-muted-foreground">
-            {admin
-              ? 'Every machine in the tailnet.'
-              : 'The machines you own and the tailnet devices they can reach.'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search
-              aria-hidden
-              className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-              strokeWidth={1.5}
-            />
-            <Input
-              value={filter}
-              onChange={setFilter}
-              placeholder="Filter…"
-              className="w-44 pl-8 sm:w-56"
-            />
-          </div>
-          <Button variant={onlineOnly ? 'primary' : 'default'} onClick={() => setOnlineOnly((v) => !v)}>
-            Online only
-          </Button>
-        </div>
+    <div className="space-y-5">
+      <header>
+        <h1 className="text-display font-semibold lg:text-page">Devices</h1>
+        <p className="text-sm text-muted-foreground">
+          {admin
+            ? 'Every machine in the tailnet.'
+            : 'The machines you own and the tailnet devices they can reach.'}
+        </p>
       </header>
 
       {!me.linked && !admin && (
@@ -128,23 +102,40 @@ export function Devices({
         </div>
       )}
 
-      {devices.data && <NetworkPulse total={pulse.total} online={pulse.online} offline={pulse.offline} expired={pulse.expired} />}
+      {devices.data && (
+        <HealthBand
+          health={health.data}
+          unavailable={health.isError}
+          online={pulse.online}
+          total={pulse.total}
+          needCount={needs.length}
+          updatedAt={devices.dataUpdatedAt}
+        />
+      )}
+
+      <NeedsList items={needs} />
+
+      {missing && (
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface-1 shadow-card px-4 py-3 text-sm">
+          That device is no longer in the tailnet.
+          <Link to="/devices" className="font-medium text-accent-700 underline-offset-4 hover:underline dark:text-accent-400">Back to devices</Link>
+        </div>
+      )}
+
+      <FilterRow query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} sort={sort} setSort={setSort} admin={admin} />
 
       {admin ? (
-        <DeviceTable
-          rows={rows}
-          pending={devices.isPending}
-          filtered={Boolean(filter || onlineOnly)}
-          onSelect={setSelected}
-        />
+        <DeviceBoard rows={rows} flips={flips} wide={wide} pending={devices.isPending} filtered={filtered} onSelect={open} />
       ) : (
         <>
           <Section title="My devices" actions={<span className="text-xs text-muted-foreground">machines owned by you</span>}>
-            <DeviceTable
+            <DeviceBoard
               rows={rows.filter((device) => device.mine)}
+              flips={flips}
+              wide={wide}
               pending={devices.isPending}
-              filtered={Boolean(filter || onlineOnly)}
-              onSelect={setSelected}
+              filtered={filtered}
+              onSelect={open}
             />
           </Section>
           <Section title="Devices I can access" actions={<span className="text-xs text-muted-foreground">based on active Grants</span>}>
@@ -154,10 +145,11 @@ export function Devices({
                 <ErrorNote error={policyError} />
               </div>
             ) : (
-              <AccessibleDeviceTable
+              <AccessibleBoard
                 rows={accessibleRows}
+                wide={wide}
                 pending={devices.isPending || policyPending}
-                filtered={Boolean(filter || onlineOnly)}
+                filtered={filtered}
                 hasOwnedDevices={mine.length > 0}
               />
             )}
@@ -165,82 +157,235 @@ export function Devices({
         </>
       )}
 
-      <DeviceDrawer id={selected} me={me} onClose={() => setSelected(null)} />
+      <DeviceDrawer id={missing ? null : selected} section={section} me={me} onClose={close} />
     </div>
   )
 }
 
-function DeviceTable({
+function FilterRow({
+  query,
+  setQuery,
+  filter,
+  setFilter,
+  sort,
+  setSort,
+  admin,
+}: {
+  query: string
+  setQuery: (v: string) => void
+  filter: DeviceFilter
+  setFilter: (f: DeviceFilter) => void
+  sort: DeviceSort
+  setSort: (s: DeviceSort) => void
+  admin: boolean
+}) {
+  // Members only see online/offline: routes, expiry and tags are operator facts.
+  const chips = admin ? FILTERS : FILTERS.filter((f) => f.id === 'all' || f.id === 'online' || f.id === 'offline')
+
+  return (
+    <div className="flex flex-col gap-3 md:flex-row md:items-center">
+      <div className="relative md:w-64">
+        <Search
+          aria-hidden
+          className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+          strokeWidth={1.5}
+        />
+        <Input value={query} onChange={setQuery} placeholder="Find a device, owner, tag or IP" className="w-full pl-9" />
+      </div>
+      <div role="radiogroup" aria-label="Show" className="-mx-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:overflow-visible md:px-0 [&::-webkit-scrollbar]:hidden">
+        {chips.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            role="radio"
+            aria-checked={filter === f.id}
+            onClick={() => setFilter(f.id)}
+            className={cn(
+              'h-10 shrink-0 whitespace-nowrap rounded-full border px-3 text-sm transition-colors md:h-9',
+              filter === f.id
+                ? 'border-accent-500/50 bg-accent-500/15 font-medium text-accent-700 dark:text-accent-400'
+                : 'border-border text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+      <label className="flex items-center gap-2 text-sm text-muted-foreground md:ml-auto">
+        Sort
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value as DeviceSort)}
+          className="h-10 rounded-lg border border-border bg-surface-1 px-2 text-sm text-foreground md:h-9"
+        >
+          {SORTS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+      </label>
+    </div>
+  )
+}
+
+function lastSeen(d: Device) {
+  if (d.online) return 'now'
+  if (!d.lastSeen) return '—'
+
+  const minutes = Math.round((Date.parse(d.lastSeen) - Date.now()) / 60000)
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+  if (Math.abs(minutes) < 60) return rtf.format(minutes, 'minute')
+  if (Math.abs(minutes) < 60 * 48) return rtf.format(Math.round(minutes / 60), 'hour')
+
+  return rtf.format(Math.round(minutes / 1440), 'day')
+}
+
+
+const awaitingRoutes = (d: Device) => (d.advertisedRoutes ?? []).some((r) => !(d.approvedRoutes ?? []).includes(r))
+const hasRoutes = (d: Device) => d.exitNode || (d.subnetRoutes ?? []).length > 0 || awaitingRoutes(d)
+
+function RouteBadges({ d }: { d: Device }) {
+  return (
+    <>
+      {d.exitNode && <Badge tone="accent">exit node</Badge>}
+      {(d.subnetRoutes ?? []).map((r) => <Badge key={r}>{r}</Badge>)}
+      {awaitingRoutes(d) && <Badge tone="warn">awaiting approval</Badge>}
+    </>
+  )
+}
+
+function DeviceBoard({
   rows,
+  flips,
+  wide,
   pending,
   filtered,
   onSelect,
 }: {
   rows: Device[]
+  wide: boolean
   pending: boolean
   filtered: boolean
   onSelect: (id: number) => void
+  flips: Map<number, { field: FlipField; key: number }>
 }) {
+  const full = useMediaQuery(XL)
+  const empty = (
+    <Empty
+      icon={Laptop}
+      title="No devices"
+      hint={filtered ? 'Nothing matches the current filter.' : 'Enrol one from the Keys page to see it here.'}
+    />
+  )
+
+  if (!wide) {
+    if (pending) return <Loading label="Loading devices"><SkeletonRows rows={4} cols={1} /></Loading>
+    if (rows.length === 0) return empty
+
+    return (
+      <CardList label="Devices">
+        {rows.map((d) => (
+          <ListRow
+            key={d.id}
+            title={d.name}
+            trailing={<FlipStatus online={d.online} expired={d.expired} flip={flips.get(d.id)?.field ?? null} flipKey={flips.get(d.id)?.key} />}
+            meta={<><span className="font-mono">{d.ips[0] ?? ''}</span> · {d.owner ?? 'tagged'}</>}
+            onOpen={() => onSelect(d.id)}
+            openLabel={`Open ${d.name}`}
+            aside={d.ips[0] && <Mono compact value={d.ips[0]} label={`${d.name} address`} />}
+          />
+        ))}
+      </CardList>
+    )
+  }
+
+  // Between md and xl the sidebar leaves too little room for six columns;
+  // routes and last seen stay in the sheet and the needs list there.
+  const cols = full ? ['Device', 'Status', 'Addresses', 'Owner', 'Routes', 'Last seen'] : ['Device', 'Status', 'Addresses', 'Owner']
+
   return (
-    <Table columns={['Device', 'Addresses', 'Owner', 'Status', 'Routes']}>
+    <Table columns={cols}>
       {pending ? (
-        <SpanRow columns={5}>
+        <SpanRow columns={cols.length}>
           <Loading label="Loading devices">
-            <SkeletonRows rows={4} cols={5} />
+            <SkeletonRows rows={4} cols={cols.length} />
           </Loading>
         </SpanRow>
       ) : rows.length === 0 ? (
-        <SpanRow columns={5}>
-          <Empty
-            icon={Laptop}
-            title="No devices"
-            hint={filtered ? 'Nothing matches the current filter.' : 'Enrol one from the Keys page to see it here.'}
-          />
-        </SpanRow>
+        <SpanRow columns={cols.length}>{empty}</SpanRow>
       ) : rows.map((d) => (
         <Row key={d.id} onClick={() => onSelect(d.id)} label={`Open ${d.name}`}>
           <Cell>
-            <div className="font-medium">{d.name}</div>
-            {(d.tags ?? []).length > 0 && (
-              <div className="mt-1 flex flex-wrap gap-1">
+            <div className="max-w-44 truncate font-medium xl:max-w-52 2xl:max-w-64" title={d.name}>{d.name}</div>
+            {((d.tags ?? []).length > 0 || (!full && hasRoutes(d))) && (
+              <div className="mt-1 flex max-w-64 flex-wrap gap-1">
                 {d.tags?.map((t) => <Badge key={t} tone="accent">{t}</Badge>)}
+                {/* No Routes column below xl, so route state rides under the name. */}
+                {!full && <RouteBadges d={d} />}
               </div>
             )}
           </Cell>
+          <Cell><FlipStatus online={d.online} expired={d.expired} flip={flips.get(d.id)?.field ?? null} flipKey={flips.get(d.id)?.key} /></Cell>
           <Cell>
-            <div className="flex flex-col gap-0.5">{d.ips.map((ip) => <Mono key={ip} value={ip} />)}</div>
-          </Cell>
-          <Cell muted>{d.owner ?? <span className="text-xs">tagged</span>}</Cell>
-          <Cell>
-            <div className="flex flex-col gap-1">
-              <Status ok={d.online} label={d.online ? 'online' : 'offline'} />
-              {d.expired && <Status ok={false} warn label="key expired" />}
+            {/* Copy buttons stop here so Enter or a click on them never opens the row. */}
+            <div className="flex flex-col gap-0.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+              {d.ips.map((ip) => <Mono key={ip} value={ip} />)}
             </div>
           </Cell>
-          <Cell>
+          <Cell muted><div className="max-w-40 truncate xl:max-w-48 2xl:max-w-56" title={d.owner}>{d.owner ?? <span className="text-xs">tagged</span>}</div></Cell>
+          {full && <Cell>
             <div className="flex flex-wrap gap-1">
-              {d.exitNode && <Badge tone="accent">exit node</Badge>}
-              {(d.subnetRoutes ?? []).map((r) => <Badge key={r}>{r}</Badge>)}
-              {(d.advertisedRoutes ?? []).filter((r) => !(d.approvedRoutes ?? []).includes(r)).length > 0 && <Badge tone="warn">awaiting approval</Badge>}
+              <RouteBadges d={d} />
             </div>
-          </Cell>
+          </Cell>}
+          {full && <Cell muted>
+            <span title={d.lastSeen ? new Date(d.lastSeen).toLocaleString() : undefined}>{lastSeen(d)}</span>
+          </Cell>}
         </Row>
       ))}
     </Table>
   )
 }
 
-function AccessibleDeviceTable({
+function AccessibleBoard({
   rows,
+  wide,
   pending,
   filtered,
   hasOwnedDevices,
 }: {
   rows: AccessibleDevice[]
+  wide: boolean
   pending: boolean
   filtered: boolean
   hasOwnedDevices: boolean
 }) {
+  const empty = (
+    <Empty
+      icon={Laptop}
+      title="No accessible devices"
+      hint={filtered ? 'Nothing matches the current filter.' : hasOwnedDevices ? 'The active Grants do not expose other tailnet devices.' : 'Enrol a device to see what it can access.'}
+    />
+  )
+
+  if (!wide) {
+    if (pending) return <Loading label="Calculating device access"><SkeletonRows rows={3} cols={1} /></Loading>
+    if (rows.length === 0) return empty
+
+    // The source devices stay on the row: a phone may reach a peer that the
+    // laptop cannot, so a source-free list would be misleading.
+    return (
+      <CardList label="Devices I can access">
+        {rows.map((d) => (
+          <ListRow
+            key={d.id}
+            title={d.name}
+            trailing={<Status ok={d.online} label={d.online ? 'online' : 'offline'} />}
+            meta={<><span className="font-mono">{d.ips[0] ?? ''}</span> · from {d.sources.join(', ')}</>}
+            aside={d.ips[0] && <Mono compact value={d.ips[0]} label={`${d.name} address`} />}
+          />
+        ))}
+      </CardList>
+    )
+  }
+
   return (
     <Table columns={['Device', 'Owner', 'Addresses', 'Status', 'Accessible from']}>
       {pending ? (
@@ -250,13 +395,7 @@ function AccessibleDeviceTable({
           </Loading>
         </SpanRow>
       ) : rows.length === 0 ? (
-        <SpanRow columns={5}>
-          <Empty
-            icon={Laptop}
-            title="No accessible devices"
-            hint={filtered ? 'Nothing matches the current filter.' : hasOwnedDevices ? 'The active Grants do not expose other tailnet devices.' : 'Enrol a device to see what it can access.'}
-          />
-        </SpanRow>
+        <SpanRow columns={5}>{empty}</SpanRow>
       ) : rows.map((d) => (
         <Row key={d.id}>
           <Cell>
@@ -276,52 +415,11 @@ function AccessibleDeviceTable({
   )
 }
 
-function NetworkPulse({
-  total,
-  online,
-  offline,
-  expired,
-}: {
-  total: number
-  online: number
-  offline: number
-  expired: number
-}) {
-  const onlineWidth = total === 0 ? 0 : (online / total) * 100
-
-  return (
-    <section aria-label="Tailnet status" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <div className="rounded-xl border border-border bg-surface-1 p-4 shadow-sm sm:col-span-2 xl:col-span-2">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-eyebrow font-semibold uppercase text-muted-foreground">Network pulse</span>
-          <Status ok={online > 0} label={`${online} online`} />
-        </div>
-        <div className="mt-3 flex items-end gap-2">
-          <strong className="text-3xl font-semibold tracking-tight">{total}</strong>
-          <span className="mb-1 text-sm text-muted-foreground">device{total === 1 ? '' : 's'} in this tailnet</span>
-        </div>
-        <div className="mt-4 h-2 overflow-hidden rounded-full bg-surface-2" aria-hidden>
-          <div className="h-full rounded-full bg-accent-500 transition-[width] duration-300" style={{ width: `${onlineWidth}%` }} />
-        </div>
-      </div>
-      <div className="rounded-xl border border-border bg-surface-1 p-4 shadow-sm">
-        <span className="text-eyebrow font-semibold uppercase text-muted-foreground">Offline</span>
-        <strong className="mt-3 block text-3xl font-semibold tracking-tight">{offline}</strong>
-        <span className="text-sm text-muted-foreground">shown in the table</span>
-      </div>
-      <div className={expired > 0 ? 'rounded-xl border border-warn/45 bg-warn/10 p-4 shadow-sm' : 'rounded-xl border border-border bg-surface-1 p-4 shadow-sm'}>
-        <span className={expired > 0 ? 'text-eyebrow font-semibold uppercase text-warn' : 'text-eyebrow font-semibold uppercase text-muted-foreground'}>Attention</span>
-        <strong className={expired > 0 ? 'mt-3 block text-3xl font-semibold tracking-tight text-warn' : 'mt-3 block text-3xl font-semibold tracking-tight'}>{expired}</strong>
-        <span className="text-sm text-muted-foreground">expired key{expired === 1 ? '' : 's'}</span>
-      </div>
-    </section>
-  )
-}
-
-function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose: () => void }) {
+function DeviceDrawer({ id, section, me, onClose }: { id: number | null; section: string | null; me: Me; onClose: () => void }) {
   const qc = useQueryClient()
   const toast = useToast()
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmExpire, setConfirmExpire] = useState(false)
   const [exitAction, setExitAction] = useState<'approve' | 'revoke' | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [editingTags, setEditingTags] = useState<string[] | null>(null)
@@ -404,6 +502,11 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
 
   const d = device.data
   const canManage = me.capabilities.includes('manage:devices')
+
+  // Arrived from "advertises a route" in the needs list: show the routing section.
+  useEffect(() => {
+    if (section === 'routing' && d) document.getElementById('routing')?.scrollIntoView({ block: 'start' })
+  }, [section, d])
   const routing = d ? routeSummary(d.advertisedRoutes ?? [], d.approvedRoutes ?? []) : null
 
   return (
@@ -411,19 +514,30 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
       open={id !== null}
       onClose={onClose}
       title={d?.name ?? 'Device'}
-      subtitle={d && <span className="font-mono text-xs">{d.ips.join('  ')}</span>}
+      icon={Laptop}
+      subtitle={d && <span className="break-all font-mono text-xs">{d.ips.join('  ')}</span>}
+      actions={d && (d.mine || canManage) && renaming === null && editingTags === null && (
+        <>
+          <IconButton icon={Pencil} label="Rename" onClick={() => setRenaming(d.name)} />
+          {canManage && (
+            <IconButton icon={Tag} label="Edit tags" onClick={() => { setEditingTags(d.tags ?? []); setTagDraft('') }} />
+          )}
+          {canManage && <Button icon={TimerReset} onClick={() => setConfirmExpire(true)}>Expire key</Button>}
+          <IconButton icon={Trash2} variant="danger" label="Remove device" onClick={() => setConfirmDelete(true)} className="ml-auto" />
+        </>
+      )}
     >
       {device.error && <ErrorNote error={device.error} />}
       {d && (
         <div className="space-y-6">
           <dl className="grid grid-cols-2 gap-3 text-sm">
             <Field label="Owner">{d.owner ?? 'tagged device'}</Field>
-            <Field label="Hostname"><code className="font-mono text-xs">{d.hostname}</code></Field>
+            <Field label="Hostname" wide><code className="break-all font-mono text-xs">{d.hostname}</code></Field>
             <Field label="Node ID"><code className="font-mono text-xs">{d.id}</code></Field>
             <Field label="Status">
               <Status ok={d.online} label={d.online ? 'online' : 'offline'} />
             </Field>
-            <Field label="Addresses">
+            <Field label="Addresses" wide>
               <span className="flex flex-wrap gap-1">
                 {d.ips.map((ip) => <Mono key={ip} value={ip} />)}
               </span>
@@ -441,15 +555,11 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
             </Field>
           </dl>
 
-          {(d.mine || canManage) && (
-            <Section title="Actions">
+          {(d.mine || canManage) && (renaming !== null || editingTags !== null) && (
+            <Section title="Edit">
               <div className="flex flex-wrap gap-2">
-                {renaming === null ? (
-                  <Button icon={Pencil} onClick={() => setRenaming(d.name)}>
-                    Rename
-                  </Button>
-                ) : (
-                  <div className="flex w-full gap-2">
+                {renaming !== null && (
+                  <div className="flex w-full flex-col gap-2 sm:flex-row">
                     <Input value={renaming} onChange={setRenaming} autoFocus className="flex-1" />
                     <Button variant="primary" icon={Check} onClick={() => rename.mutate(renaming)}>
                       Save
@@ -460,14 +570,9 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
                   </div>
                 )}
 
-                {canManage && (
-                  editingTags === null ? (
-                    <Button icon={Tag} onClick={() => { setEditingTags(d.tags ?? []); setTagDraft('') }}>
-                      Edit tags
-                    </Button>
-                  ) : (
+                {canManage && editingTags !== null && (
                     <div className="flex w-full flex-col gap-2">
-                      <div className="relative flex flex-1 flex-wrap items-center gap-1 rounded-lg border border-border bg-surface-1 px-1.5 py-1 shadow-sm transition-colors focus-within:border-accent-500">
+                      <div className="relative flex flex-1 flex-wrap items-center gap-1 rounded-lg border border-border bg-surface-1 px-1.5 py-1 transition-colors focus-within:border-accent-500">
                         {editingTags.map((tag) => {
                           const valid = tag.startsWith('tag:') && knownTags.includes(tag)
 
@@ -492,10 +597,10 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
                               <button
                                 type="button"
                                 aria-label={`Remove ${tag}`}
-                                className="opacity-60 hover:opacity-100"
+                                className="relative opacity-60 hover:opacity-100 after:absolute after:-inset-4 md:after:hidden"
                                 onClick={() => setEditingTags(editingTags.filter((t) => t !== tag))}
                               >
-                                ×
+                                <X aria-hidden className="size-3" strokeWidth={2} />
                               </button>
                             </span>
                           )
@@ -518,7 +623,7 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
                               setEditingTags(editingTags.slice(0, -1))
                             }
                           }}
-                          className="min-w-24 flex-1 bg-transparent px-1 py-0.5 font-mono text-xs outline-none placeholder:text-muted-foreground"
+                          className="bare min-w-24 flex-1 bg-transparent px-1 py-0.5 font-mono text-xs outline-none placeholder:text-muted-foreground"
                         />
 
                         {tagSuggestionsOpen && (() => {
@@ -575,23 +680,13 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
                         owning user, and Headscale will not let a tagged device go back to having one.
                       </p>
                     </div>
-                  )
                 )}
-
-                {canManage && (
-                  <Button icon={TimerReset} onClick={() => expire.mutate()}>
-                    Expire key
-                  </Button>
-                )}
-
-                <Button variant="danger" icon={Trash2} onClick={() => setConfirmDelete(true)}>
-                  Remove device
-                </Button>
               </div>
             </Section>
           )}
 
           {routing && canManage && (routing.exit.state !== 'none' || routing.subnets.length > 0) && (
+            <div id="routing" className="scroll-mt-4">
             <Section title="Networking & routing">
               <div className="space-y-4">
                 {routing.exit.state !== 'none' && (
@@ -654,6 +749,7 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
                 )}
               </div>
             </Section>
+            </div>
           )}
 
           <Section title="Effective rules">
@@ -661,28 +757,16 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
               Computed by Headscale&apos;s own policy engine, not an approximation.
             </p>
 
-            <nav className="flex gap-1 border-b border-border">
-              {(
-                [
-                  ['inbound', 'Who can reach this'],
-                  ['outbound', 'What this can reach'],
-                  ['peers', 'Peers it can see'],
-                ] as const
-              ).map(([k, label]) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => setTab(k)}
-                  className={
-                    tab === k
-                      ? 'border-b-2 border-accent-500 px-2.5 py-1.5 text-sm font-medium'
-                      : 'border-b-2 border-transparent px-2.5 py-1.5 text-sm text-muted-foreground hover:text-foreground'
-                  }
-                >
-                  {label}
-                </button>
-              ))}
-            </nav>
+            <Tabs
+              items={[
+                { id: 'inbound', label: 'Who can reach this' },
+                { id: 'outbound', label: 'What this can reach' },
+                { id: 'peers', label: 'Peers it can see' },
+              ] as const}
+              value={tab}
+              onChange={setTab}
+              label="Effective rules"
+            />
 
             {rules.isPending && (
               <Loading label="Computing effective rules">
@@ -717,6 +801,21 @@ function DeviceDrawer({ id, me, onClose }: { id: number | null; me: Me; onClose:
         </div>
       )}
 
+      {/* Expiring cuts the device off until someone signs it in again, so it asks first. */}
+      <Confirm
+        open={confirmExpire}
+        title={`Expire the key for ${d?.name ?? 'this device'}?`}
+        body={
+          <>
+            <span className="font-mono">{d?.name}</span> is disconnected now and stays off the tailnet until it signs
+            in again with <span className="font-mono">tailscale up</span>.
+          </>
+        }
+        confirmLabel="Expire key"
+        onConfirm={() => expire.mutate(undefined, { onSettled: () => setConfirmExpire(false) })}
+        onCancel={() => setConfirmExpire(false)}
+        busy={expire.isPending}
+      />
       <Confirm
         open={confirmDelete}
         title={`Remove ${d?.name ?? 'this device'}?`}
@@ -808,10 +907,10 @@ function RuleList({ rules, empty }: { rules: EffectiveRule[]; empty: string }) {
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, wide }: { label: string; children: React.ReactNode; wide?: boolean }) {
   return (
-    <div>
-      <dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt>
+    <div className={cn('min-w-0', wide && 'col-span-2')}>
+      <dt className="text-eyebrow font-semibold uppercase text-muted-foreground">{label}</dt>
       <dd className="mt-0.5">{children}</dd>
     </div>
   )

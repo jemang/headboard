@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useModal } from '../lib/modal'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Me } from '../lib/api'
 import { useRouter } from '../lib/routerContext'
@@ -26,13 +28,19 @@ export function Palette({
   theme,
   setTheme,
   onDevice,
+  open,
+  onOpenChange: setOpen,
 }: {
   me: Me
   theme: Theme
   setTheme: (t: Theme) => void
   onDevice: (id: number) => void
+  /** Held by the shell so the phone header's search button can open it too. */
+  open: boolean
+  onOpenChange: (open: boolean) => void
 }) {
-  const [open, setOpen] = useState(false)
+  const openRef = useRef(open)
+  openRef.current = open
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -46,18 +54,16 @@ export function Palette({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
-        setOpen((v) => !v)
+        setOpen(!openRef.current)
         setQuery('')
         setActive(0)
       }
-
-      if (e.key === 'Escape') setOpen(false)
     }
 
     window.addEventListener('keydown', onKey)
 
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [setOpen])
 
   useEffect(() => {
     if (open) inputRef.current?.focus()
@@ -98,6 +104,11 @@ export function Palette({
     return hit.slice(0, 40)
   }, [commands, query])
 
+  // Portaled and modal like the sheets, so ⌘K over an open sheet still works:
+  // the sheet's #root inert does not reach it, and Escape closes only this.
+  const panel = useRef<HTMLDivElement>(null)
+  useModal(open, panel, () => setOpen(false), 'first')
+
   if (!open) return null
 
   const choose = (c: Command | undefined) => {
@@ -107,12 +118,13 @@ export function Palette({
     setOpen(false)
   }
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 pt-[12vh]"
       onClick={() => setOpen(false)}
     >
       <div
+        ref={panel}
         role="dialog"
         aria-label="Command palette"
         className="w-full max-w-lg overflow-hidden rounded-xl border border-border bg-surface-1 shadow-2xl"
@@ -160,8 +172,8 @@ export function Palette({
                 onClick={() => choose(c)}
                 className={
                   i === active
-                    ? 'flex w-full items-baseline gap-2 bg-surface-2 px-4 py-2 text-left text-sm'
-                    : 'flex w-full items-baseline gap-2 px-4 py-2 text-left text-sm'
+                    ? 'flex min-h-11 w-full items-center gap-2 bg-surface-2 px-4 py-2 text-left text-sm md:min-h-0'
+                    : 'flex min-h-11 w-full items-center gap-2 px-4 py-2 text-left text-sm md:min-h-0'
                 }
               >
                 <span>{c.label}</span>
@@ -172,7 +184,8 @@ export function Palette({
           ))}
         </ul>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

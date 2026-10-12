@@ -1,14 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { unixUserProblem } from '../lib/formHints'
+import { cn } from '../lib/cn'
+import { useRouter } from '../lib/routerContext'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Link2, Link2Off, Plus, RotateCw, Trash2 } from 'lucide-react'
+import { CircleAlert, Info, KeyRound, Link2, Link2Off, Plus, RotateCw, Server, Trash2 } from 'lucide-react'
 import { api, type SshAccess as SshAccessData, type SshAgent, type SshServer } from '../lib/api'
-import { Badge, Button, Confirm, Empty, ErrorNote, Input, Mono, Section } from '../components/ui'
+import { Badge, Button, Confirm, Empty, ErrorNote, Input, Menu, Mono, Section, Status, IconButton } from '../components/ui'
 import { TagSelector } from '../components/TagSelector'
 import { useToast } from '../components/toastContext'
 import { CommandCard } from './Help'
-import { headboardUrl, sshAgentInstallCommand, sshNewMachineCommand, tokenFor, userTokens, visibleRows, insecureInstallUrl, revokeRefusal, saveCleanup, loadCleanup, sshAgentOneLiner, withRow, idsFromTokens } from '../lib/sshAccess'
+import { headboardUrl, sshAgentInstallCommand, sshNewMachineCommand, tokenFor, userTokens, visibleRows, insecureInstallUrl, revokeRefusal, saveCleanup, loadCleanup, sshAgentOneLiner, withRow, idsFromTokens, pickableTokens } from '../lib/sshAccess'
 
-type User = { id: number; name: string }
+type User = { id: number; name: string; keys?: number }
 
 /** The /ssh route. The server enforces manage:ssh regardless; this keeps other
  *  roles from a page of polling 403s and a form they cannot use. */
@@ -24,6 +27,21 @@ export function SshAccess() {
   const qc = useQueryClient()
   const toast = useToast()
   const access = useQuery({ queryKey: ['ssh-access'], queryFn: api.sshAccess, refetchInterval: 15000 })
+  const target = useRouter().search.get('server')
+  const [highlight, setHighlight] = useState<string | null>(null)
+
+  // Arrived from "is suspended" in the needs list: bring that server into view
+  // and mark it briefly once the list has loaded.
+  const loaded = access.isSuccess
+  useEffect(() => {
+    if (!target || !loaded) return
+
+    document.getElementById(`server-${target}`)?.scrollIntoView({ block: 'start' })
+    setHighlight(target)
+    const t = setTimeout(() => setHighlight(null), 2000)
+
+    return () => clearTimeout(t)
+  }, [target, loaded])
   const users = useQuery({ queryKey: ['tailnet-users'], queryFn: api.tailnetUsers })
 
   const refresh = () => {
@@ -73,13 +91,14 @@ export function SshAccess() {
     onSettled: () => setRemovingOrphan(null),
   })
 
-  const people: User[] = users.data?.users.map((u) => ({ id: u.id, name: u.name })) ?? []
+  // The access response carries key counts; the users list is the fallback
+  // while it loads, and for a server that predates the people field.
+  const people: User[] = access.data?.people ?? users.data?.users.map((u) => ({ id: u.id, name: u.name })) ?? []
 
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-eyebrow font-semibold uppercase text-muted-foreground">SSH</p>
-        <h1 className="mt-1 text-display font-semibold">SSH access</h1>
+        <h1 className="text-display font-semibold lg:text-page">SSH access</h1>
         <p className="max-w-3xl text-sm text-muted-foreground">
           Choose who may log in as which unix user on each server. Servers come from the Hosts tab in Access control;
           an agent on the Proxmox host or server writes the keys. Changes reach servers within about 30 seconds.
@@ -87,6 +106,12 @@ export function SshAccess() {
       </header>
 
       {access.error ? <ErrorNote error={access.error} /> : null}
+
+      {target && access.data && !access.data.servers.some((s) => s.name === target) && (
+        <div role="status" className="rounded-lg border border-border bg-surface-1 shadow-card px-4 py-3 text-sm">
+          That server is no longer in the policy.
+        </div>
+      )}
 
       {access.data?.servers.length === 0 && (
         <Empty icon={KeyRound} title="No servers yet" hint="Add a single-IP entry in Access control → Hosts first." />
@@ -101,6 +126,7 @@ export function SshAccess() {
             onSetRow={(unixUser, ids) => saveRow(s.name, unixUser, ids)}
             onApprove={(agentId, ref) => approve.mutate({ host: s.name, agentId, ref })}
             onUnbind={() => setUnbinding(s.name)}
+            highlighted={s.name === highlight}
           />
         ))}
       </div>
@@ -112,9 +138,7 @@ export function SshAccess() {
               <li key={o.hostName} className="flex flex-wrap items-center gap-2">
                 <Mono value={o.hostName} />
                 <span className="text-muted-foreground">{o.unixUsers.join(', ') || 'binding only'}</span>
-                <Button variant="ghost" icon={Trash2} onClick={() => setRemovingOrphan(o.hostName)}>
-                  Remove
-                </Button>
+                <IconButton icon={Trash2} variant="danger" label={`Remove ${o.hostName}`} onClick={() => setRemovingOrphan(o.hostName)} />
               </li>
             ))}
           </ul>
@@ -151,102 +175,141 @@ export function ServerCard({
   onSetRow,
   onApprove,
   onUnbind,
+  highlighted = false,
 }: {
   server: SshServer
   users: User[]
   onSetRow: (unixUser: string, ids: number[]) => void
   onApprove: (agentId: number, ref: string) => void
   onUnbind: () => void
+  /** Arrived here from the needs list for this server. */
+  highlighted?: boolean
 }) {
   const tokens = useMemo(() => userTokens(users), [users])
   const [newUnixUser, setNewUnixUser] = useState('')
   const [pending, setPending] = useState<string[]>([])
+  const [removing, setRemoving] = useState<string | null>(null)
   const rows = visibleRows(server.rows, pending)
+  const removingRow = rows.find((r) => r.unixUser === removing)
+  const unixProblem = unixUserProblem(newUnixUser, rows.map((r) => r.unixUser))
   const b = server.binding
   const ambiguous = server.suggestions.some((s) => s.ambiguous)
 
   return (
-    <article className="rounded-xl border border-border bg-surface-1 p-4 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="font-semibold">{server.name}</h2>
-          <Mono value={server.ip} />
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          {b ? (
-            <>
-              <Badge tone={b.state === 'active' ? 'accent' : 'danger'}>{b.state === 'active' ? 'Active' : 'Suspended'}</Badge>
-              <span className="text-muted-foreground">{b.agentName} / CT {b.targetRef}</span>
-              {b.state === 'suspended' && b.reapprovable && (
-                <Button icon={Link2} onClick={() => onApprove(b.agentId, b.targetRef)}>Re-approve</Button>
-              )}
-              <Button variant="ghost" icon={Link2Off} onClick={onUnbind}>Unbind</Button>
-            </>
-          ) : ambiguous ? (
-            <span className="text-danger">
-              Two targets report this IP:{' '}
-              {server.suggestions.map((s) => `${s.agentName} / CT ${s.targetRef} (${s.hostname})`).join(', ')}. Fix the
-              duplicate before approving.
-            </span>
-          ) : server.suggestions.length === 1 ? (
-            <>
-              <span className="text-muted-foreground">
-                {server.suggestions[0].agentName} / CT {server.suggestions[0].targetRef} ({server.suggestions[0].hostname})
-              </span>
-              <Button variant="primary" icon={Link2} onClick={() => onApprove(server.suggestions[0].agentId, server.suggestions[0].targetRef)}>
-                Approve
-              </Button>
-            </>
-          ) : (
-            <span className="text-muted-foreground">No agent has reported this IP yet.</span>
+    <article
+      id={`server-${server.name}`}
+      className={cn('scroll-mt-24 rounded-xl border border-border bg-surface-1 p-4 shadow-card transition-shadow sm:p-6', highlighted && 'ring-2 ring-attention')}
+    >
+      <div className="flex items-start gap-3 sm:gap-4">
+        <span
+          aria-hidden
+          className={cn(
+            'grid size-10 shrink-0 place-items-center rounded-full sm:size-12',
+            !b ? 'bg-surface-2 text-muted-foreground' : b.state === 'active' ? 'bg-accent-500/12 text-accent-700 dark:text-accent-400' : 'bg-danger/10 text-danger',
           )}
+        >
+          <Server className="size-5" strokeWidth={1.6} />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-wrap items-start justify-between gap-x-3 gap-y-1">
+          <div className="min-w-0">
+            <h2 className="break-all text-title">{server.name}</h2>
+            <Mono value={server.ip} />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-sm sm:min-h-9">
+            {b ? (
+              <>
+                <Status ok={b.state === 'active'} bad={b.state !== 'active'} label={b.state === 'active' ? 'active' : 'suspended'} />
+                <span className="text-muted-foreground">{b.agentName} / CT {b.targetRef}</span>
+                {b.state === 'suspended' && b.reapprovable && (
+                  <Button icon={Link2} onClick={() => onApprove(b.agentId, b.targetRef)}>Re-approve</Button>
+                )}
+              </>
+            ) : ambiguous ? (
+              <span className="text-danger">
+                Two targets report this IP:{' '}
+                {server.suggestions.map((s) => `${s.agentName} / CT ${s.targetRef} (${s.hostname})`).join(', ')}. Fix the
+                duplicate before approving.
+              </span>
+            ) : server.suggestions.length === 1 ? (
+              <>
+                <span className="text-muted-foreground">
+                  {server.suggestions[0].agentName} / CT {server.suggestions[0].targetRef} ({server.suggestions[0].hostname})
+                </span>
+                <Button variant="primary" icon={Link2} onClick={() => onApprove(server.suggestions[0].agentId, server.suggestions[0].targetRef)}>
+                  Approve
+                </Button>
+              </>
+            ) : (
+              <span className="text-muted-foreground">No agent has reported this IP yet.</span>
+            )}
+          </div>
         </div>
+        {b && <Menu label={`More actions for ${server.name}`} items={[{ label: 'Unbind', icon: Link2Off, danger: true, onSelect: onUnbind }]} />}
       </div>
 
       {b?.state === 'suspended' && (
-        <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted-foreground">
-          The approved IP was {b.approvedIp}. Nothing is written or cleared until someone with SSH access re-approves.
-          {!b.reapprovable && ` Waiting for ${b.agentName} to report CT ${b.targetRef} at ${server.ip}; or unbind it.`}
+        <p className="mt-4 flex gap-2.5 rounded-lg bg-surface-2 px-3 py-2.5 text-sm text-muted-foreground">
+          <Info aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={1.6} />
+          <span>
+            The approved IP was {b.approvedIp}. Nothing is written or cleared until someone with SSH access re-approves.
+            {!b.reapprovable && ` Waiting for ${b.agentName} to report CT ${b.targetRef} at ${server.ip}; or unbind it.`}
+          </span>
         </p>
       )}
 
-      <div className="mt-4 space-y-2">
-        {rows.map((r) => (
-          <div key={r.unixUser} className="grid gap-2 sm:grid-cols-[10rem_1fr] sm:items-start">
-            <div className="flex items-center gap-2 pt-2">
-              <Mono value={r.unixUser} />
-              {r.unixUser === 'root' && <Badge tone="danger">root login</Badge>}
-            </div>
-            <div>
-              <TagSelector
-                tags={[...tokens.keys()]}
-                value={r.users.map((u) => tokenFor(tokens, u.id))}
-                onChange={(next) => onSetRow(r.unixUser, idsFromTokens(tokens, next))}
-                placeholder="Add a person…"
-                searchLabel={`Find people for ${r.unixUser}`}
-                emptyHint="Create a Headscale user first."
-              />
-              <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                {r.pending && <span>Not saved yet. Add a person to keep this row.</span>}
-                {r.users.filter((u) => u.keys === 0 && !u.missing).map((u) => (
-                  <span key={u.id}>{u.name} has no keys</span>
-                ))}
-                {r.users.filter((u) => u.missing).map((u) => (
-                  <span key={u.id} className="text-danger">user #{u.id} no longer exists</span>
-                ))}
-                {r.warnings.map((w, i) => (
-                  <span key={`${i}-${w}`} className="text-danger">{w}</span>
-                ))}
+      <div className="mt-4 space-y-3">
+        {rows.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border px-4 py-4 text-center text-sm text-muted-foreground">
+            No unix users yet. Add one below, then choose who may log in as it.
+          </p>
+        ) : (
+          <div className="divide-y divide-border rounded-lg border border-border">
+            {rows.map((r) => (
+              <div key={r.unixUser} className="grid gap-2 px-3 py-3 sm:grid-cols-[10rem_1fr] sm:items-start">
+                <div className="flex items-center gap-2 sm:pt-0.5">
+                  <Mono value={r.unixUser} />
+                  {r.unixUser === 'root' && <Badge tone="danger">root login</Badge>}
+                  {/* An unsaved row only lives in this card; a saved one takes away access, so it asks. */}
+                  <IconButton
+                    icon={Trash2}
+                    variant="danger"
+                    label={`Remove ${r.unixUser} from ${server.name}`}
+                    className="ml-auto"
+                    onClick={() => (r.pending ? setPending(pending.filter((u) => u !== r.unixUser)) : setRemoving(r.unixUser))}
+                  />
+                </div>
+                <div>
+                  <TagSelector
+                    tags={pickableTokens(tokens, users)}
+                    value={r.users.map((u) => tokenFor(tokens, u.id))}
+                    onChange={(next) => onSetRow(r.unixUser, idsFromTokens(tokens, next))}
+                    placeholder="Add a person…"
+                    searchLabel={`Find people for ${r.unixUser}`}
+                    emptyHint="Nobody has an SSH key yet. Add one from People, on the person's sheet."
+                  />
+                  <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                    {r.pending && <span>Not saved yet. Add a person to keep this row.</span>}
+                    {r.users.filter((u) => u.keys === 0 && !u.missing).map((u) => (
+                      <span key={u.id}>{u.name} has no keys</span>
+                    ))}
+                    {r.users.filter((u) => u.missing).map((u) => (
+                      <span key={u.id} className="text-danger">user #{u.id} no longer exists</span>
+                    ))}
+                    {r.warnings.map((w, i) => (
+                      <span key={`${i}-${w}`} className="text-danger">{w}</span>
+                    ))}
+                  </div>
+                </div>
               </div>
-            </div>
+            ))}
           </div>
-        ))}
+        )}
 
-        <div className="flex gap-2 pt-1">
-          <Input value={newUnixUser} onChange={setNewUnixUser} placeholder="unix user, e.g. deploy" />
+        <div className="flex gap-2">
+          <Input value={newUnixUser} onChange={setNewUnixUser} placeholder="unix user, e.g. deploy" className="min-w-0 flex-1" />
           <Button
             icon={Plus}
-            disabled={!/^[a-z_][a-z0-9_-]{0,31}$/.test(newUnixUser) || rows.some((r) => r.unixUser === newUnixUser)}
+            disabled={newUnixUser === '' || unixProblem !== null}
             onClick={() => {
               setPending([...pending, newUnixUser])
               setNewUnixUser('')
@@ -255,16 +318,38 @@ export function ServerCard({
             Unix user
           </Button>
         </div>
+        {unixProblem && <p className="text-xs text-danger">{unixProblem}</p>}
       </div>
 
       {server.pendingClears.length > 0 &&
         (server.binding?.state === 'suspended' ? (
-          <p className="mt-3 text-xs text-warn">
+          <p className="mt-3 flex items-start gap-2 text-sm text-warn">
+            <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={1.6} />
             Not removed yet, server suspended: {server.pendingClears.join(', ')}. Re-approve or unbind to remove.
           </p>
         ) : (
           <p className="mt-3 text-xs text-muted-foreground">Clearing: {server.pendingClears.join(', ')}</p>
         ))}
+      <Confirm
+        open={removingRow !== undefined}
+        title={`Remove ${removing} from ${server.name}?`}
+        body={
+          removingRow && removingRow.users.length > 0
+            ? `${removingRow.users.map((u) => u.name).join(', ')} will no longer be able to log in as ${removing}. Their keys are cleared on the agent's next sync.`
+            : `Nobody will be able to log in as ${removing}.`
+        }
+        confirmLabel="Remove"
+        onConfirm={() => {
+          // Also forget it locally: a row added in this card stays in `pending`
+          // and would come back as an unsaved row once the server drops it.
+          if (removing) {
+            onSetRow(removing, [])
+            setPending(pending.filter((u) => u !== removing))
+          }
+          setRemoving(null)
+        }}
+        onCancel={() => setRemoving(null)}
+      />
     </article>
   )
 }
@@ -376,18 +461,18 @@ export function AgentsSection() {
 
         <ul className="divide-y divide-border rounded-lg border border-border">
           {agents.data?.agents.map((a) => (
-            <li key={a.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
+            <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5 text-sm">
               <span className="font-medium">{a.name}</span>
-              <Badge tone="neutral">{a.mode || 'not connected'}</Badge>
-              {!a.online && <Badge tone="warn">offline</Badge>}
+              <Status ok={a.online} label={a.online ? 'online' : a.mode ? 'offline' : 'never connected'} />
+              {a.mode && <Badge tone="neutral">{a.mode}</Badge>}
               {a.version && !a.versionMatch && <Badge tone="danger">agent {a.version} ≠ Headboard</Badge>}
               <span className="text-muted-foreground">
                 {a.lastSeenAt ? `seen ${new Date(a.lastSeenAt).toLocaleString()}` : 'never seen'} · {a.discovered.length} targets ·{' '}
                 {a.bindings} bound{a.pendingClears > 0 ? ` · ${a.pendingClears} clears pending` : ''}
               </span>
-              <span className="ml-auto flex gap-2">
-                <Button variant="ghost" icon={RotateCw} onClick={() => setRotating(a)}>Rotate token</Button>
-                <Button variant="danger" icon={Trash2} onClick={() => setRevoking(a)}>Revoke</Button>
+              <span className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
+                <Button variant="ghost" icon={RotateCw} onClick={() => setRotating(a)} className="flex-1 justify-center sm:flex-none">Rotate token</Button>
+                <IconButton icon={Trash2} variant="danger" label={`Revoke ${a.name}`} onClick={() => setRevoking(a)} />
               </span>
               {a.warnings.length > 0 && (
                 <ul className="w-full space-y-0.5 text-xs text-danger">
@@ -412,7 +497,7 @@ export function AgentsSection() {
               Forcing leaves the keys it wrote on the servers; you will get commands to remove them by hand.
             </p>
             <div className="flex gap-2">
-              <Button variant="danger" icon={Trash2} disabled={revoke.isPending} onClick={() => revoke.mutate({ agent: refused.agent, force: true })}>
+              <Button variant="danger-solid" icon={Trash2} disabled={revoke.isPending} onClick={() => revoke.mutate({ agent: refused.agent, force: true })}>
                 Force revoke
               </Button>
               <Button variant="ghost" onClick={() => setRefused(null)}>Cancel</Button>

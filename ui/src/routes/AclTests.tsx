@@ -9,8 +9,8 @@ import {
   type PolicyDraft,
   type Simulation,
 } from '../lib/api'
-import { Badge, Button, Empty, ErrorNote, Input, Section, Status } from '../components/ui'
-import { FlaskConical, Play, Plus, Radar, Trash2 } from 'lucide-react'
+import { Badge, Button, Empty, ErrorNote, Input, Section, Status, IconButton } from '../components/ui'
+import { ArrowRight, FlaskConical, Play, Plus, Radar, Trash2 } from 'lucide-react'
 import { TokenPicker } from '../components/TokenPicker'
 import { validateTokens } from '../lib/tokenValidation'
 import { schemaWithPendingChanges } from '../lib/policyDraft'
@@ -179,20 +179,13 @@ function TestsRunner({
       ) : (
         <ul className="space-y-2">
           {entries.map(([pointer, group]) => (
-            <li key={pointer} className="rounded-lg border border-border bg-surface-1 p-3">
+            <li key={pointer} className="rounded-lg border border-border bg-surface-1 shadow-card p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-xs text-muted-foreground">{pointer}</span>
                 <span className="font-mono text-sm">{group[0].src}</span>
                 {group[0].proto && <Badge>{group[0].proto}</Badge>}
 
-                <Button
-                  variant="ghost"
-                  icon={Trash2}
-                  className="ml-auto"
-                  onClick={() => queue({ op: 'remove', path: pointer })}
-                >
-                  Delete
-                </Button>
+                <IconButton icon={Trash2} variant="danger" label={`Delete test for ${group[0].src}`} className="ml-auto" onClick={() => queue({ op: 'remove', path: pointer })} />
               </div>
 
               <ul className="mt-2 space-y-1">
@@ -263,7 +256,7 @@ function AddTest({ policy, queue }: { policy: Policy; queue: (op: PatchOp) => vo
         <select
           value={kind}
           onChange={(e) => setKind(e.target.value as 'accept' | 'deny')}
-          className="rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
+          className="h-10 rounded-lg border border-border bg-surface-1 px-2 text-sm md:h-9"
         >
           <option value="accept">must reach</option>
           <option value="deny">must not reach</option>
@@ -356,13 +349,13 @@ function Simulator({
 
       <div className="flex flex-wrap items-end gap-2">
         <DevicePicker label="from" value={src} onChange={setSrc} devices={list} />
-        <span className="pb-2 text-muted-foreground">→</span>
+        <ArrowRight aria-hidden className="mb-3 hidden size-4 shrink-0 text-muted-foreground sm:block" strokeWidth={1.5} />
         <div>
           <span className="text-xs text-muted-foreground">destination type</span>
           <select
             value={destinationMode}
             onChange={(event) => setDestinationMode(event.target.value as 'device' | 'ip')}
-            className="block rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
+            className="block h-10 rounded-lg border border-border bg-surface-1 px-2 text-sm md:h-9"
           >
             <option value="device">Tailnet device</option>
             <option value="ip">IP address</option>
@@ -408,12 +401,13 @@ function DevicePicker({
   devices: Device[]
 }) {
   return (
-    <div>
+    <div className="min-w-0 basis-full sm:basis-auto">
       <span className="text-xs text-muted-foreground">{label}</span>
+      {/* A select is as wide as its longest option; a long device name widened the page. */}
       <select
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="block rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
+        className="block h-10 w-full max-w-full rounded-lg border border-border bg-surface-1 px-2 text-sm sm:w-64 md:h-9"
       >
         <option value={0}>— choose a device —</option>
         {devices.map((d) => (

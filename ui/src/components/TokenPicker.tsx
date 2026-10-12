@@ -1,3 +1,4 @@
+import { X } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { clsx } from 'clsx'
 import type { Tokens } from '../lib/api'
@@ -60,7 +61,7 @@ export function TokenPicker({
   }
 
   return (
-    <div className="relative flex min-h-10 flex-1 flex-wrap items-center gap-1 rounded-lg border border-border bg-surface-1 px-1.5 py-1 shadow-sm transition-colors focus-within:border-accent-500">
+    <div className="relative flex min-h-10 flex-1 flex-wrap md:min-h-9 items-center gap-1 rounded-lg border border-border bg-surface-1 px-1.5 py-1 transition-colors focus-within:border-accent-500">
       {values.map((v, i) => {
         const issue = validateToken(v, tokens, slot)
 
@@ -80,10 +81,10 @@ export function TokenPicker({
             <button
               type="button"
               aria-label={`Remove ${v}`}
-              className="opacity-60 hover:opacity-100"
+              className="relative opacity-60 hover:opacity-100 after:absolute after:-inset-4 md:after:hidden"
               onClick={() => onChange(values.filter((_, j) => j !== i))}
             >
-              ×
+              <X aria-hidden className="size-3" strokeWidth={2} />
             </button>
           </span>
         )
@@ -109,7 +110,7 @@ export function TokenPicker({
             onChange(values.slice(0, -1))
           }
         }}
-        className="min-w-24 flex-1 bg-transparent px-1 py-0.5 font-mono text-xs outline-none placeholder:text-muted-foreground"
+        className="bare min-w-24 flex-1 bg-transparent px-1 py-0.5 font-mono text-xs outline-none placeholder:text-muted-foreground"
       />
 
       {open && suggestions.length > 0 && (

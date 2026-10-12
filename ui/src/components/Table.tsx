@@ -19,7 +19,7 @@ export function Table({
   className?: string
 }) {
   return (
-    <div className={cn('overflow-x-auto rounded-xl border border-border bg-surface-1 shadow-sm', className)}>
+    <div className={cn('overflow-x-auto rounded-xl border border-border bg-surface-1 shadow-card', className)}>
       <table className="w-full min-w-max text-sm">
         <thead>
           <tr>

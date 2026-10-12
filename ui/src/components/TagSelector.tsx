@@ -1,3 +1,4 @@
+import { X } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 
 export function TagSelector({
@@ -42,17 +43,17 @@ export function TagSelector({
   }
 
   return (
-    <div className="relative mt-1 flex min-h-10 flex-1 flex-wrap items-center gap-1 rounded-lg border border-border bg-surface-1 px-1.5 py-1 shadow-sm transition-colors focus-within:border-accent-500">
+    <div className="relative mt-1 flex min-h-10 flex-1 flex-wrap md:min-h-9 items-center gap-1 rounded-lg border border-border bg-surface-1 px-1.5 py-1 transition-colors focus-within:border-accent-500">
       {value.map((tag) => (
         <span key={tag} className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-foreground">
           {tag}
           <button
             type="button"
             aria-label={`Remove ${tag}`}
-            className="opacity-60 hover:opacity-100"
+            className="relative opacity-60 hover:opacity-100 after:absolute after:-inset-4 md:after:hidden"
             onClick={() => onChange(value.filter((selected) => selected !== tag))}
           >
-            ×
+            <X aria-hidden className="size-3" strokeWidth={2} />
           </button>
         </span>
       ))}
@@ -85,7 +86,7 @@ export function TagSelector({
             onChange(value.slice(0, -1))
           }
         }}
-        className="min-w-24 flex-1 bg-transparent px-1 py-0.5 font-mono text-xs outline-none placeholder:text-muted-foreground"
+        className="bare min-w-24 flex-1 bg-transparent px-1 py-0.5 font-mono text-xs outline-none placeholder:text-muted-foreground"
       />
       {open && suggestions.length > 0 && (
         <ul className="absolute left-0 top-full z-20 mt-1 max-h-56 w-56 overflow-y-auto rounded-lg border border-border bg-surface-0 py-1 shadow-raised">

@@ -19,8 +19,7 @@ export function Help() {
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Operator reference</p>
-        <h1 className="mt-1 text-display font-semibold">Help</h1>
+        <h1 className="text-display font-semibold lg:text-page">Help</h1>
         <p className="max-w-3xl text-sm text-muted-foreground">
           Copy a command, run it on the target device, then use Headboard to approve its registration and routes.
           These commands do not contain a key or automatically connect a device.
@@ -41,13 +40,17 @@ export function Help() {
       <Section title="Enrol and assign" actions={<span className="text-xs text-muted-foreground">manual approval required</span>}>
         {(registrationInfo.error || policy.error) && <ErrorNote error={registrationInfo.error ?? policy.error} />}
         <div className="grid gap-3 xl:grid-cols-2">
-          <CommandCard
-            title="Enrol a device"
-            description="Start a standard device registration against this Headscale control server."
-            command={url ? serverRegistrationCommand(url, 'standard', '') : ''}
-            pending={!registrationInfo.error && !url}
-            note={<><code>hskey-authreq-…</code> is printed on the device. Paste it into <Link to="/keys" className="text-accent-700 underline underline-offset-2 dark:text-accent-400">Keys</Link> to approve the request.</>}
-          />
+          <article className="min-w-0 space-y-3 rounded-lg border border-border bg-surface-0 p-3">
+            <div>
+              <h2 className="text-sm font-semibold">Enrol a device</h2>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                The enrolment command and the registration approval live together on the Keys page.
+              </p>
+            </div>
+            <Link to="/keys#enrol" className="inline-flex h-10 items-center rounded-lg border border-border bg-surface-1 px-3 text-sm font-medium hover:border-accent-500/40 md:h-9">
+              Open enrolment
+            </Link>
+          </article>
           <CommandCard
             title="Enrol a tagged server"
             description="Attach a service tag when the server starts registration."
@@ -151,7 +154,7 @@ export function CommandCard({
   pending?: boolean
 }) {
   return (
-    <article className="space-y-3 rounded-lg border border-border bg-surface-0 p-3">
+    <article className="min-w-0 space-y-3 rounded-lg border border-border bg-surface-0 p-3">
       <div>
         <h2 className="text-sm font-semibold">{title}</h2>
         <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
@@ -160,7 +163,7 @@ export function CommandCard({
       {command ? (
         <div className="flex items-center gap-2 rounded-md bg-surface-2 px-2 py-1.5">
           <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs">{command}</code>
-          <Mono compact label={/command$/i.test(title) ? title.toLowerCase() : `${title.toLowerCase()} command`} value={command} className="shrink-0 border border-border px-2 py-1.5" />
+          <Mono compact label={/command$/i.test(title) ? title.toLowerCase() : `${title.toLowerCase()} command`} value={command} className="shrink-0" />
         </div>
       ) : <p className="text-xs text-muted-foreground">{pending ? 'Loading the Headscale address…' : emptyHint}</p>}
       <p className="text-xs leading-5 text-muted-foreground">{note}</p>

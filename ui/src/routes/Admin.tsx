@@ -1,17 +1,22 @@
 import { useState } from 'react'
+import { registrationIdHint } from '../lib/formHints'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Account, type Device, type Me, type Role, type TailnetUser } from '../lib/api'
-import { Badge, Button, Confirm, Drawer, Empty, ErrorNote, Input, Mono, Section, Status } from '../components/ui'
+import { Badge, Button, Confirm, Drawer, Empty, ErrorNote, Input, Mono, Section, Status, IconButton } from '../components/ui'
 import { Cell, Row, SpanRow, Table } from '../components/Table'
 import { Loading, SkeletonRows } from '../components/Skeleton'
 import { useToast } from '../components/toastContext'
-import { Check, KeyRound, Pencil, ShieldCheck, Trash2, UserPlus, Users, X } from 'lucide-react'
+import { Check, KeyRound, Pencil, ShieldCheck, Trash2, UserPlus, UserRound, Users, X } from 'lucide-react'
 import { SshKeysSection } from '../components/SshKeysSection'
 import { duplicateAccountEmails } from '../lib/duplicateAccountEmails'
 import { expiryFromDays, isExpired } from '../lib/apiKeyControls'
 import { preAuthHardening } from '../lib/preAuthHardening'
 import { serverRegistrationCommand, type ServerRegistrationKind } from '../lib/serverRegistrationCommand'
 import { Link } from '../lib/router'
+import { useRouter } from '../lib/routerContext'
+import { useHashScroll } from '../lib/useHashScroll'
+import { MD, useMediaQuery } from '../lib/useMediaQuery'
+import { CardList, ListRow } from '../components/ListRow'
 import { devicesForOwner } from '../lib/ownerDevices'
 import { duplicateUserNames } from '../lib/duplicateUserNames'
 import { TagSelector } from '../components/TagSelector'
@@ -26,6 +31,8 @@ export function People({ me }: { me: Me }) {
   const users = useQuery({ queryKey: ['tailnet-users'], queryFn: api.tailnetUsers })
   const accounts = useQuery({ queryKey: ['accounts'], queryFn: api.accounts })
   const devices = useQuery({ queryKey: ['devices'], queryFn: api.devices })
+  const { search, navigate } = useRouter()
+  const wide = useMediaQuery(MD)
 
   const [newUser, setNewUser] = useState('')
   const [selectedUserID, setSelectedUserID] = useState<number | null>(null)
@@ -89,16 +96,22 @@ export function People({ me }: { me: Me }) {
     onError: toast.error,
   })
 
-  if (users.error) return <ErrorNote error={users.error} />
+  if (users.error && !users.data) return <ErrorNote error={users.error} />
 
   const duplicateNames = duplicateUserNames(users.data?.users ?? [])
   const duplicateEmails = duplicateAccountEmails(accounts.data?.accounts ?? [])
 
+  const allAccounts = accounts.data?.accounts ?? []
+  const pending = allAccounts.filter((a) => a.admission === 'pending' && a.id !== me.user.id)
+  const settled = allAccounts.filter((a) => !pending.includes(a))
+  const accountParam = search.get('account')
+  const openAccount = (id: number) => navigate(`/people?account=${id}`)
+  const decide = (id: number, state: 'active' | 'rejected') => admission.mutate({ id, state })
+
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Identity management</p>
-        <h1 className="mt-1 text-display font-semibold">People</h1>
+        <h1 className="text-display font-semibold lg:text-page">People</h1>
         <p className="text-sm text-muted-foreground">
           Headscale users own devices. Headboard accounts are OIDC identities with a role. They have
           to be linked, and a user created with the CLI has no OIDC identity to match.
@@ -107,10 +120,54 @@ export function People({ me }: { me: Me }) {
 
       {accounts.error && <ErrorNote error={accounts.error} />}
 
+      {pending.length > 0 && (
+        <Section title="Waiting for approval">
+          <ul className="overflow-hidden rounded-xl border border-attention/35 bg-surface-1">
+            {pending.map((a) => (
+              <li key={a.id} className="flex flex-col gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:flex-row sm:items-center sm:px-5">
+                <button type="button" onClick={() => openAccount(a.id)} className="min-w-0 flex-1 text-left">
+                  <span className="block truncate font-medium">{a.displayName || a.email}</span>
+                  <span className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                    <span className="min-w-0 break-all">{a.email}</span>
+                    {duplicateEmails.has(a.email.toLowerCase()) && <Badge tone="danger">duplicate email</Badge>}
+                  </span>
+                </button>
+                <div className="flex gap-2">
+                  <Button variant="primary" icon={Check} disabled={admission.isPending} onClick={() => decide(a.id, 'active')} className="flex-1 sm:flex-none">
+                    Approve
+                  </Button>
+                  <Button variant="danger" icon={X} disabled={admission.isPending} onClick={() => decide(a.id, 'rejected')} className="flex-1 sm:flex-none">
+                    Reject
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
       <Section
         title="Headboard accounts"
         actions={<span className="text-xs text-muted-foreground">who can sign in</span>}
       >
+        {!wide ? (
+          accounts.isPending ? (
+            <Loading label="Loading accounts"><SkeletonRows rows={2} cols={1} /></Loading>
+          ) : (
+            <CardList label="Headboard accounts">
+              {settled.map((a) => (
+                <ListRow
+                  key={a.id}
+                  title={a.displayName || a.email}
+                  meta={`${a.email} · ${a.role}`}
+                  trailing={<Badge tone={a.admission === 'active' ? 'accent' : 'danger'}>{a.admission}</Badge>}
+                  onOpen={() => openAccount(a.id)}
+                  openLabel={`Open ${a.email}`}
+                />
+              ))}
+            </CardList>
+          )
+        ) : (
         <Table columns={['Identity', 'Admission', 'Role', 'Linked Headscale user']}>
           {accounts.isPending ? (
             <SpanRow columns={4}>
@@ -118,52 +175,26 @@ export function People({ me }: { me: Me }) {
                 <SkeletonRows rows={2} cols={3} />
               </Loading>
             </SpanRow>
-          ) : accounts.data?.accounts.length ? (
-            accounts.data.accounts.map((a) => (
+          ) : settled.length ? (
+            settled.map((a) => (
                   <Row key={a.id}>
                     <Cell>
-                      <div className="font-medium">{a.displayName || a.email}</div>
+                      <button type="button" onClick={() => openAccount(a.id)} className="text-left font-medium underline-offset-4 hover:underline">
+                        {a.displayName || a.email}
+                      </button>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         {a.email}
                         {duplicateEmails.has(a.email.toLowerCase()) && <Badge tone="danger">duplicate email</Badge>}
                       </div>
                     </Cell>
                     <Cell>
-                      <div className="flex flex-wrap items-center gap-2"><Badge tone={a.admission === 'active' ? 'accent' : a.admission === 'pending' ? 'warn' : 'danger'}>{a.admission}</Badge>
-                      {a.admission === 'pending' && a.id !== me.user.id && <><Button variant="ghost" disabled={admission.isPending} onClick={() => admission.mutate({ id: a.id, state: 'active' })}>Approve</Button><Button variant="ghost" disabled={admission.isPending} onClick={() => admission.mutate({ id: a.id, state: 'rejected' })}>Reject</Button></>}</div>
+                      <Badge tone={a.admission === 'active' ? 'accent' : 'danger'}>{a.admission}</Badge>
                     </Cell>
                     <Cell>
-                      <select
-                        value={a.role}
-                        disabled={a.id === me.user.id}
-                        onChange={(e) => role.mutate({ id: a.id, r: e.target.value as Role })}
-                        className="rounded-md border border-border bg-surface-1 px-2 py-1 text-sm disabled:opacity-50"
-                      >
-                        {roles.map((r) => (
-                          <option key={r} value={r}>
-                            {r}
-                          </option>
-                        ))}
-                      </select>
+                      <RoleSelect account={a} me={me} onChange={(r) => role.mutate({ id: a.id, r })} />
                     </Cell>
                     <Cell>
-                      <select
-                        value={a.headscaleUserId ?? ''}
-                        onChange={(e) =>
-                          link.mutate({
-                            id: a.id,
-                            hsID: e.target.value === '' ? null : Number(e.target.value),
-                          })
-                        }
-                        className="rounded-md border border-border bg-surface-1 px-2 py-1 text-sm"
-                      >
-                        <option value="">— not linked —</option>
-                        {users.data?.users.map((u) => (
-                          <option key={u.id} value={u.id}>
-                            {u.name}
-                          </option>
-                        ))}
-                      </select>
+                      <LinkSelect account={a} users={users.data?.users ?? []} onChange={(hsID) => link.mutate({ id: a.id, hsID })} />
                     </Cell>
                   </Row>
             ))
@@ -177,9 +208,28 @@ export function People({ me }: { me: Me }) {
             </SpanRow>
           )}
         </Table>
+        )}
       </Section>
 
       <Section title="Headscale users" actions={<span className="text-xs text-muted-foreground">who owns devices</span>}>
+        {!wide ? (
+          users.isPending ? (
+            <Loading label="Loading users"><SkeletonRows rows={3} cols={1} /></Loading>
+          ) : (
+            <CardList label="Headscale users">
+              {users.data?.users.map((u) => (
+                <ListRow
+                  key={u.id}
+                  title={<>{u.name}{duplicateNames.has(u.name.toLowerCase()) && <> <Badge tone="danger">duplicate name</Badge></>}</>}
+                  meta={`${u.email ? `${u.email} · ` : ''}${u.devices} device${u.devices === 1 ? '' : 's'}`}
+                  trailing={u.providerId ? <Status ok label="matched" /> : <Status ok={false} warn label="not linked" />}
+                  onOpen={() => setSelectedUserID(u.id)}
+                  openLabel={`Open ${u.name}`}
+                />
+              ))}
+            </CardList>
+          )
+        ) : (
         <Table columns={['User', { label: 'Devices', align: 'right' }, 'OIDC identity']}>
           {users.isPending ? (
             <SpanRow columns={3}>
@@ -211,14 +261,28 @@ export function People({ me }: { me: Me }) {
             ))
           )}
         </Table>
+        )}
 
-        <div className="flex items-center gap-2">
-          <Input value={newUser} onChange={setNewUser} placeholder="new username" className="w-56" />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Input value={newUser} onChange={setNewUser} placeholder="new username" className="w-full sm:w-56" />
           <Button icon={UserPlus} disabled={newUser === ''} onClick={() => create.mutate(newUser)}>
             Create user
           </Button>
         </div>
       </Section>
+
+      <AccountDrawer
+        id={accountParam === null ? null : Number(accountParam)}
+        accounts={allAccounts}
+        loaded={accounts.isSuccess}
+        users={users.data?.users ?? []}
+        me={me}
+        busy={admission.isPending}
+        onRole={(id, r) => role.mutate({ id, r })}
+        onLink={(id, hsID) => link.mutate({ id, hsID })}
+        onDecide={decide}
+        onClose={() => navigate('/people', { replace: true })}
+      />
 
       <UserDrawer
         user={users.data?.users.find((u) => u.id === selectedUserID)}
@@ -251,6 +315,103 @@ export function People({ me }: { me: Me }) {
         onCancel={() => setDeleteTarget(null)}
       />
     </div>
+  )
+}
+
+function RoleSelect({ account, me, onChange }: { account: Account; me: Me; onChange: (r: Role) => void }) {
+  return (
+    <select
+      aria-label={`Role for ${account.email}`}
+      value={account.role}
+      disabled={account.id === me.user.id}
+      onChange={(e) => onChange(e.target.value as Role)}
+      className="h-10 w-full rounded-lg border border-border bg-surface-1 px-2 text-sm disabled:opacity-50 md:h-9 md:w-auto"
+    >
+      {roles.map((r) => (
+        <option key={r} value={r}>
+          {r}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+function LinkSelect({ account, users, onChange }: { account: Account; users: TailnetUser[]; onChange: (hsID: number | null) => void }) {
+  return (
+    <select
+      aria-label={`Headscale user for ${account.email}`}
+      value={account.headscaleUserId ?? ''}
+      onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
+      className="h-10 w-full rounded-lg border border-border bg-surface-1 px-2 text-sm md:h-9 md:w-auto"
+    >
+      <option value="">— not linked —</option>
+      {users.map((u) => (
+        <option key={u.id} value={u.id}>
+          {u.name}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+/** One account: admission, role and the Headscale user it is linked to. */
+function AccountDrawer({
+  id,
+  accounts,
+  loaded,
+  users,
+  me,
+  busy,
+  onRole,
+  onLink,
+  onDecide,
+  onClose,
+}: {
+  id: number | null
+  accounts: Account[]
+  loaded: boolean
+  users: TailnetUser[]
+  me: Me
+  busy: boolean
+  onRole: (id: number, r: Role) => void
+  onLink: (id: number, hsID: number | null) => void
+  onDecide: (id: number, state: 'active' | 'rejected') => void
+  onClose: () => void
+}) {
+  const a = id === null ? undefined : accounts.find((x) => x.id === id)
+  const gone = id !== null && loaded && !a
+
+  return (
+    <Drawer
+      open={id !== null && (a !== undefined || gone)}
+      onClose={onClose}
+      title={a ? a.displayName || a.email : 'Account'}
+      icon={UserRound}
+      subtitle={a && <span className="text-xs">{a.email}</span>}
+      actions={a?.admission === 'pending' && a.id !== me.user.id && (
+        <>
+          <Button variant="primary" icon={Check} disabled={busy} onClick={() => onDecide(a.id, 'active')}>Approve</Button>
+          <Button variant="danger" icon={X} disabled={busy} onClick={() => onDecide(a.id, 'rejected')} className="ml-auto">Reject</Button>
+        </>
+      )}
+    >
+      {gone && <p className="text-sm text-muted-foreground">That account no longer exists.</p>}
+      {a && (
+        <dl className="grid gap-4 text-sm">
+          <Field label="Admission">
+            <Badge tone={a.admission === 'active' ? 'accent' : a.admission === 'pending' ? 'warn' : 'danger'}>{a.admission}</Badge>
+          </Field>
+          <Field label="Signed up">{new Date(a.createdAt).toLocaleString()}</Field>
+          <Field label="Role">
+            <RoleSelect account={a} me={me} onChange={(r) => onRole(a.id, r)} />
+            {a.id === me.user.id && <p className="mt-1 text-xs text-muted-foreground">You cannot change your own role.</p>}
+          </Field>
+          <Field label="Linked Headscale user">
+            <LinkSelect account={a} users={users} onChange={(hsID) => onLink(a.id, hsID)} />
+          </Field>
+        </dl>
+      )}
+    </Drawer>
   )
 }
 
@@ -288,7 +449,21 @@ function UserDrawer({
       open={user !== undefined}
       onClose={onClose}
       title={user?.name ?? 'User'}
-      subtitle={user?.email && <span className="text-xs">{user.email}</span>}
+      icon={UserRound}
+      subtitle={user?.email && <span className="break-all text-xs">{user.email}</span>}
+      actions={user && renaming === null && (
+        <>
+          <IconButton icon={Pencil} label="Rename" onClick={() => setRenaming(user.name)} />
+          <IconButton
+            icon={Trash2}
+            variant="danger"
+            label={user.devices > 0 ? `Delete user — ${user.name} still owns devices; remove or reassign them first` : 'Delete user'}
+            disabled={user.devices > 0}
+            onClick={() => onDelete(user)}
+            className="ml-auto"
+          />
+        </>
+      )}
     >
       {user && (
         <div className="space-y-6">
@@ -308,7 +483,7 @@ function UserDrawer({
                 <Status ok={false} warn label="none — must be linked by hand" />
               )}
             </Field>
-            <Field label="Linked Headboard account">
+            <Field label="Linked Headboard account" wide>
               <select
                 value={linkedAccount?.id ?? ''}
                 onChange={(e) => {
@@ -320,7 +495,7 @@ function UserDrawer({
                     link.mutate({ id: Number(e.target.value), hsID: user.id })
                   }
                 }}
-                className="rounded-md border border-border bg-surface-1 px-2 py-1 text-sm"
+                className="h-10 w-full rounded-lg border border-border bg-surface-1 px-2 text-sm md:h-9"
               >
                 <option value="">— not linked —</option>
                 {accounts.map((a) => (
@@ -332,14 +507,11 @@ function UserDrawer({
             </Field>
           </dl>
 
-          <Section title="Actions">
+          {renaming !== null && (
+          <Section title="Rename">
             <div className="flex flex-wrap gap-2">
-              {renaming === null ? (
-                <Button icon={Pencil} onClick={() => setRenaming(user.name)}>
-                  Rename
-                </Button>
-              ) : (
-                <div className="flex w-full gap-2">
+              {(
+                <div className="flex w-full flex-col gap-2 sm:flex-row">
                   <Input value={renaming} onChange={setRenaming} autoFocus className="flex-1" />
                   <Button
                     variant="primary"
@@ -353,18 +525,9 @@ function UserDrawer({
                   </Button>
                 </div>
               )}
-
-              <Button
-                variant="danger"
-                icon={Trash2}
-                disabled={user.devices > 0}
-                title={user.devices > 0 ? `${user.name} still owns devices; remove or reassign them first` : undefined}
-                onClick={() => onDelete(user)}
-              >
-                Delete user
-              </Button>
             </div>
           </Section>
+          )}
 
           {canManageSsh && <SshKeysSection userId={user.id} userName={user.name} />}
 
@@ -377,10 +540,10 @@ function UserDrawer({
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, wide }: { label: string; children: React.ReactNode; wide?: boolean }) {
   return (
-    <div>
-      <dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt>
+    <div className={wide ? 'col-span-2 min-w-0' : 'min-w-0'}>
+      <dt className="text-eyebrow font-semibold uppercase text-muted-foreground">{label}</dt>
       <dd className="mt-0.5">{children}</dd>
     </div>
   )
@@ -397,6 +560,8 @@ function OwnerDevices({
   pending: boolean
   error: unknown
 }) {
+  const { navigate } = useRouter()
+
   if (pending) {
     return (
       <Loading label={`Loading ${name}'s devices`}>
@@ -412,31 +577,25 @@ function OwnerDevices({
         <p className="text-sm text-muted-foreground">
           Devices owned by <span className="font-medium text-foreground">{name}</span>
         </p>
-        <Link to="/devices" className="text-sm font-medium text-accent-700 underline underline-offset-2 dark:text-accent-400">
+        <Link to="/devices" className="inline-flex min-h-11 items-center text-sm font-medium text-accent-700 underline underline-offset-2 md:min-h-0 dark:text-accent-400">
           View full inventory
         </Link>
       </div>
       {devices.length === 0 ? (
         <Empty icon={Users} title="No devices found" hint="The inventory changed while this view was open." />
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
+        <CardList label={`Devices owned by ${name}`}>
           {devices.map((device) => (
-            <article key={device.id} className="rounded-lg border border-border bg-surface-0 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-medium">{device.name}</p>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {device.tags?.map((tag) => <Badge key={tag} tone="accent">{tag}</Badge>)}
-                  </div>
-                </div>
-                <Status ok={device.online} label={device.online ? 'online' : 'offline'} />
-              </div>
-              <div className="mt-3 flex flex-wrap gap-1">
-                {device.ips.map((ip) => <Mono key={ip} value={ip} />)}
-              </div>
-            </article>
+            <ListRow
+              key={device.id}
+              title={<span title={device.name}>{device.name}</span>}
+              trailing={<Status ok={device.online} label={device.online ? 'online' : 'offline'} />}
+              meta={<span className="font-mono">{device.ips.join(' · ')}{device.tags?.length ? ` · ${device.tags.join(', ')}` : ''}</span>}
+              onOpen={() => navigate(`/devices?device=${device.id}`)}
+              openLabel={`Open ${device.name}`}
+            />
           ))}
-        </div>
+        </CardList>
       )}
     </div>
   )
@@ -491,15 +650,30 @@ export function Keys({ me }: { me: Me }) {
   })
   const hardening = preAuthHardening(keys.data?.keys ?? [])
 
+  useHashScroll(`${keys.status}${headscaleKeys.status}${users.status}`)
+  const wide = useMediaQuery(MD)
+
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Secure enrolment</p>
-        <h1 className="mt-1 text-display font-semibold">Keys</h1>
+        <h1 className="text-display font-semibold lg:text-page">Keys</h1>
         <p className="text-sm text-muted-foreground">
           Every device requires explicit approval. Pre-auth keys are disabled.
         </p>
       </header>
+
+      <nav aria-label="Sections" className="-mx-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:px-0 [&::-webkit-scrollbar]:hidden">
+        {[
+          { to: '/keys#enrol', label: 'Enrol a device', show: true },
+          { to: '/keys#approve', label: 'Approve a registration', show: deviceManager },
+          { to: '/keys#preauth', label: 'Pre-auth keys', show: admin },
+          { to: '/keys#apikeys', label: 'API keys', show: admin },
+        ].filter((c) => c.show).map((c) => (
+          <Link key={c.to} to={c.to} className="inline-flex h-10 shrink-0 items-center whitespace-nowrap rounded-full border border-border px-3 text-sm text-muted-foreground hover:text-foreground md:h-9">
+            {c.label}
+          </Link>
+        ))}
+      </nav>
 
       {(keys.error || headscaleKeys.error) && (
         <ErrorNote error={keys.error ?? headscaleKeys.error} />
@@ -520,7 +694,11 @@ export function Keys({ me }: { me: Me }) {
         </Section>
       )}
 
-      {admin && <Section title="Pre-auth keys">
+      {admin && <Section id="preauth" title="Pre-auth keys">
+        {/* On a phone an empty table frame only clips its own message. */}
+        {!wide && keys.isSuccess && keys.data.keys.length === 0 ? (
+          <Empty icon={KeyRound} title="No pre-auth keys" hint="Pre-auth keys are disabled: every device joins through Enrol a device and is approved above." />
+        ) : (
         <Table columns={['User', 'Flags', 'Tags', 'Expires']}>
           {keys.isPending ? (
             <SpanRow columns={4}>
@@ -556,15 +734,16 @@ export function Keys({ me }: { me: Me }) {
               <Empty
                 icon={KeyRound}
                 title="No pre-auth keys"
-                hint="Create one above to enrol a device."
+                hint="Pre-auth keys are disabled: every device joins through Enrol a device and is approved above."
               />
             </SpanRow>
           )}
         </Table>
+        )}
       </Section>}
 
       {admin && (
-        <Section title="Headscale API keys">
+        <Section id="apikeys" title="Headscale API keys">
           <div className="rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm">
             Use an API key only for trusted server-to-server automation. It grants full administrator
             access to this tailnet, cannot enrol a device, and has no read-only scope on Headscale v0.29.
@@ -579,7 +758,7 @@ export function Keys({ me }: { me: Me }) {
                   setApiKeyLifetime(event.target.value)
                   setConfirmApiKey(false)
                 }}
-                className="mt-1 block rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
+                className="mt-1 block h-10 rounded-lg border border-border bg-surface-1 px-2 text-sm md:h-9"
               >
                 <option value="30">30 days</option>
                 <option value="90">90 days</option>
@@ -708,7 +887,7 @@ function EnrolDevice() {
     : ''
 
   return (
-    <Section title="Enrol a device" actions={<span className="text-xs text-muted-foreground">manual approval required</span>}>
+    <Section id="enrol" title="Enrol a device" actions={<span className="text-xs text-muted-foreground">manual approval required</span>}>
       <p className="text-sm text-muted-foreground">
         Run this on your server. It creates a pending request only; send its <code>hskey-authreq-…</code> ID to an owner, admin, or network admin for approval.
       </p>
@@ -716,7 +895,7 @@ function EnrolDevice() {
       {command ? (
         <div className="flex items-center gap-2 rounded-md bg-surface-2 px-2 py-1.5">
           <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs">{command}</code>
-          <Mono compact label="device enrolment command" value={command} className="shrink-0 border border-border px-2 py-1.5" />
+          <Mono compact label="device enrolment command" value={command} className="shrink-0" />
         </div>
       ) : !registrationInfo.error && <p className="text-xs text-muted-foreground">Loading the Headscale address…</p>}
     </Section>
@@ -755,7 +934,8 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
     },
   })
 
-  const ready = authId.trim().length > 13
+  const idHint = registrationIdHint(authId)
+  const ready = authId.trim().length > 13 && idHint === null
   const needsServerValue = serverKind === 'tagged' || serverKind === 'subnet'
   const commandValue = serverKind === 'tagged' ? selectedTags.join(',') : serverValue.trim()
   const command = registrationInfo.data?.headscalePublicUrl && (!needsServerValue || commandValue)
@@ -763,7 +943,7 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
     : ''
 
   return (
-    <Section title="Advanced registration and approval">
+    <Section id="approve" title="Approve a registration">
       <p className="text-sm text-muted-foreground">
         Generate a tagged-server, subnet-router, or exit-node command. Running it creates a pending
         request; it cannot join until you paste its <code>hskey-authreq-…</code> ID below and approve it.
@@ -782,7 +962,7 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
                 setServerValue('')
                 setSelectedTags([])
               }}
-              className="mt-1 block rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
+              className="mt-1 block h-10 rounded-lg border border-border bg-surface-1 px-2 text-sm md:h-9"
             >
               <option value="tagged">Tagged server</option>
               <option value="subnet">Subnet router</option>
@@ -808,7 +988,7 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
         {command ? (
           <div className="flex items-center gap-2 rounded-md bg-surface-2 px-2 py-1.5">
             <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs">{command}</code>
-            <Mono compact label="server registration command" value={command} className="shrink-0 border border-border px-2 py-1.5" />
+            <Mono compact label="server registration command" value={command} className="shrink-0" />
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">
@@ -828,7 +1008,8 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
       <div className="flex flex-wrap items-end gap-2">
         <div className="min-w-72 flex-1">
           <span className="text-xs text-muted-foreground">Registration id</span>
-          <Input value={authId} onChange={setAuthId} placeholder="hskey-authreq-…" />
+          <Input value={authId} onChange={setAuthId} placeholder="hskey-authreq-…" className="w-full" />
+          {idHint && <p className="mt-1 text-xs text-danger">{idHint}</p>}
         </div>
 
         <div>
@@ -836,7 +1017,7 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
           <select
             value={user}
             onChange={(e) => setUser(e.target.value)}
-            className="block rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
+            className="block h-10 rounded-lg border border-border bg-surface-1 px-2 text-sm md:h-9"
           >
             <option value="">— as requested —</option>
             {users.map((u) => (
@@ -847,18 +1028,21 @@ function ApproveRegistration({ users }: { users: TailnetUser[] }) {
           </select>
         </div>
 
-        <Button
-          variant="primary"
-          icon={ShieldCheck}
-          disabled={!ready || approve.isPending}
-          onClick={() => approve.mutate()}
-        >
-          {approve.isPending ? 'Approving…' : 'Approve'}
-        </Button>
+        <div className="flex w-full gap-2 sm:w-auto">
+          <Button
+            variant="primary"
+            icon={ShieldCheck}
+            disabled={!ready || approve.isPending}
+            onClick={() => approve.mutate()}
+            className="flex-1 justify-center sm:flex-none"
+          >
+            {approve.isPending ? 'Approving…' : 'Approve'}
+          </Button>
 
-        <Button variant="ghost" disabled={!ready || reject.isPending} onClick={() => reject.mutate()}>
-          Reject
-        </Button>
+          <Button variant="ghost" disabled={!ready || reject.isPending} onClick={() => reject.mutate()} className="flex-1 justify-center sm:flex-none">
+            Reject
+          </Button>
+        </div>
       </div>
     </Section>
   )

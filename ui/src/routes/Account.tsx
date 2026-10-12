@@ -35,13 +35,12 @@ export function Account({ me }: { me: Me }) {
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Your identity</p>
-        <h1 className="mt-1 text-display font-semibold">Account</h1>
+        <h1 className="text-display font-semibold lg:text-page">Account</h1>
         <p className="text-sm text-muted-foreground">{me.user.email}</p>
       </header>
 
       <Section title="Role">
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex flex-wrap items-start gap-3 text-sm">
           <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs">
             {me.user.role}
           </span>
@@ -133,7 +132,7 @@ function Field({
         autoComplete={autoComplete}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-border bg-surface-1 px-2.5 py-1.5 text-sm"
+        className="h-10 w-full rounded-lg border border-border bg-surface-1 px-3 text-sm md:h-9"
       />
       {problem ? (
         <span className="block text-xs text-danger">{problem}</span>

@@ -1,7 +1,10 @@
 import { useMemo, useState } from 'react'
+import { hostEntryProblem } from '../lib/formHints'
+import { Tabs } from '../components/Tabs'
+import { MD, useMediaQuery } from '../lib/useMediaQuery'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Grant, type PatchOp, type Policy, type PolicyPreview, type SshRule } from '../lib/api'
-import { Button, Badge, Confirm, Empty, ErrorNote, Input, Section } from '../components/ui'
+import { Button, Badge, Confirm, Empty, ErrorNote, Input, Section, IconButton } from '../components/ui'
 import { TokenPicker } from '../components/TokenPicker'
 import { validateTokens } from '../lib/tokenValidation'
 import { TestsTab } from './AclTests'
@@ -10,7 +13,7 @@ import { Loading, Skeleton } from '../components/Skeleton'
 import { cascadePolicyDeletion, type CascadeResult, grantsWithPendingChanges, newMapEntryPatch, schemaWithPendingChanges } from '../lib/policyDraft'
 import { grantStageOp, jumpTarget, policyStateNotice, type PolicyTab } from '../lib/grantEditor'
 import { Link } from '../lib/router'
-import { Eye, Plus, Save, Trash2, Undo2 } from 'lucide-react'
+import { ArrowRight, Eye, Plus, Save, Trash2, Undo2 } from 'lucide-react'
 
 const tabs: { id: PolicyTab; label: string }[] = [
   { id: 'grants', label: 'Grants' },
@@ -27,6 +30,7 @@ export function Acl() {
   const qc = useQueryClient()
   const toast = useToast()
   const [tab, setTab] = useState<PolicyTab>('grants')
+  const wide = useMediaQuery(MD)
   const [pending, setPending] = useState<PatchOp[]>([])
   const [rawDraft, setRawDraft] = useState<string | null>(null)
   const [highlight, setHighlight] = useState<string | null>(null)
@@ -65,7 +69,7 @@ export function Acl() {
       </Loading>
     )
   }
-  if (policy.error) return <ErrorNote error={policy.error} />
+  if (policy.error && !policy.data) return <ErrorNote error={policy.error} />
 
   const p = policy.data
 
@@ -88,15 +92,14 @@ export function Acl() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-eyebrow font-semibold uppercase text-muted-foreground">Policy workbench</p>
-          <h1 className="mt-1 text-display font-semibold">Access control</h1>
+          <h1 className="text-display font-semibold lg:text-page">Access control</h1>
           <p className="text-sm text-muted-foreground">
             Edited as a form, stored as your HuJSON. Comments and layout outside the fields you
             change are left alone.
           </p>
         </div>
         <div className="rounded-lg border border-border bg-surface-1 px-3 py-2 text-xs text-muted-foreground">
-          <span className="text-eyebrow font-semibold uppercase">Revision </span>
+          <span>Revision</span>
           <code className="ml-1 font-mono">{p.sha256.slice(0, 12)}</code>
         </div>
       </header>
@@ -110,22 +113,7 @@ export function Acl() {
 
       <PolicyStateNotice policy={p} onRaw={() => setTab('raw')} />
 
-      <nav className="flex gap-1 overflow-x-auto border-b border-border pb-px" aria-label="Policy sections">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={
-              tab === t.id
-                ? 'border-b-2 border-accent-500 px-3 py-2 text-sm font-semibold text-foreground transition-colors'
-                : 'border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-border hover:text-foreground'
-            }
-          >
-            {t.label}
-          </button>
-        ))}
-      </nav>
+      <Tabs items={tabs} value={tab} onChange={setTab} label="Policy sections" />
 
       {tab === 'grants' && <GrantsTab policy={p} pending={pending} queue={queue} highlight={highlight} />}
       {tab === 'groups' && <MapListTab policy={p} pending={pending} section="groups" queue={queue} slot="src" />}
@@ -135,6 +123,9 @@ export function Acl() {
       {tab === 'auto' && <AutoApproversTab policy={p} pending={pending} queue={queue} />}
       {tab === 'tests' && (
         <TestsTab policy={p} draft={change} queue={queue} onJump={jump} />
+      )}
+      {tab === 'raw' && !wide && (
+        <p className="text-sm text-muted-foreground">Long HuJSON edits are easier on a desktop.</p>
       )}
       {tab === 'raw' && (
         <RawTab
@@ -151,12 +142,13 @@ export function Acl() {
       )}
 
       {change && (
-        <div className="sticky bottom-4 z-10 space-y-3 rounded-xl border border-accent-500/35 bg-surface-1/95 p-3 shadow-raised backdrop-blur sm:p-4">
+        // Sits above the phone's bottom bar; on desktop it keeps to the page bottom.
+        <div className="sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-10 max-h-[70dvh] space-y-3 overflow-y-auto rounded-xl border border-accent-500/35 bg-surface-1/95 p-3 shadow-raised backdrop-blur sm:p-4 lg:bottom-4">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="accent">
-              {rawDraft !== null ? 'raw edit' : `${pending.length} pending change${pending.length === 1 ? '' : 's'}`}
-            </Badge>
-            <Input value={note} onChange={setNote} placeholder="Why? (saved with the revision)" className="flex-1" />
+            <span className="mr-auto text-sm font-semibold">
+              {rawDraft !== null ? 'Raw edit staged' : `${pending.length} change${pending.length === 1 ? '' : 's'} staged`}
+            </span>
+
             <Button
               icon={Eye}
               onClick={() => preview.mutate({ sha256: p.sha256, ...change })}
@@ -164,27 +156,29 @@ export function Acl() {
             >
               {preview.isPending ? 'Checking…' : 'Preview diff'}
             </Button>
-            <Button
-              variant="ghost"
+            <IconButton
               icon={Undo2}
+              label="Discard staged changes"
               onClick={() => {
                 setPending([])
                 setRawDraft(null)
                 preview.reset()
               }}
-            >
-              Discard
-            </Button>
+            />
           </div>
 
           {preview.error && <ErrorNote error={preview.error} />}
 
           {preview.data && (
+            <>
+            {/* Asked for here, with the diff in view, rather than taking a row of the bar on a phone. */}
+            <Input value={note} onChange={setNote} placeholder="Why? (saved with the revision)" className="w-full" />
             <PreviewPanel
               preview={preview.data}
               saving={save.isPending}
               onSave={() => save.mutate({ sha256: p.sha256, note, ...change })}
             />
+            </>
           )}
         </div>
       )}
@@ -366,8 +360,12 @@ function GrantRow({
           <Badge tone="warn">Raw HuJSON only</Badge>
           <p className="text-sm text-muted-foreground">This grant contains application capabilities. It stays in place and can only be edited in Raw HuJSON.</p>
         </div>
-      ) : <div className="flex flex-wrap items-start gap-2">
-        <span className="mt-1.5 w-8 shrink-0 font-mono text-xs text-muted-foreground">#{index}</span>
+      ) : <>
+      <h3 className="mb-2 truncate text-sm font-semibold">
+        <span className="font-mono text-muted-foreground">#{index}</span>{' '}
+        {src[0] ?? '…'}{src.length > 1 ? ` +${src.length - 1}` : ''} → {dst[0] ?? '…'}{dst.length > 1 ? ` +${dst.length - 1}` : ''}
+      </h3>
+      <div className="flex flex-wrap items-start gap-2">
 
         <div className="flex min-w-64 flex-1 flex-col gap-1">
           <span className="text-xs text-muted-foreground">from</span>
@@ -380,7 +378,7 @@ function GrantRow({
           />
         </div>
 
-        <span className="mt-6 text-muted-foreground">→</span>
+        <ArrowRight aria-hidden className="mt-7 hidden size-4 shrink-0 text-muted-foreground md:block" strokeWidth={1.5} />
 
         <div className="flex min-w-64 flex-1 flex-col gap-1">
           <span className="text-xs text-muted-foreground">to</span>
@@ -410,18 +408,13 @@ function GrantRow({
           >
             Stage
           </Button>
-          <Button
-            variant="ghost"
-            icon={Trash2}
-            onClick={() => queue({ op: 'remove', path: `/grants/${index}` })}
-          >
-            Delete
-          </Button>
+          <IconButton icon={Trash2} variant="danger" label={`Delete grant #${index}`} onClick={() => queue({ op: 'remove', path: `/grants/${index}` })} />
         </div>
-      </div>}
+      </div>
+      </>}
 
       {issues.length > 0 && (
-        <ul className="mt-2 space-y-0.5 pl-10 text-xs text-danger">
+        <ul className="mt-2 space-y-0.5 text-xs text-danger">
           {issues.map((issue) => (
             <li key={issue.token} className={issue.severity === 'warning' ? 'text-warn' : ''}>
               <span className="font-mono">{issue.token}</span> — {issue.reason}
@@ -457,7 +450,7 @@ function MapListTab({
 
   return (
     <Section
-      title={section}
+      title={section === 'tagOwners' ? 'Tag owners' : 'Groups'}
       actions={section === 'tagOwners' ? (
         <span className="text-xs text-muted-foreground">
           who may claim a tag — devices get tagged from Devices, not here
@@ -558,15 +551,15 @@ function MapListRow({
   const issues = validateTokens(values, policy.tokens, slot)
 
   return (
-    <li className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-1 p-2.5">
-      <code className="w-48 shrink-0 font-mono text-xs">{name}</code>
+    <li className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-1 shadow-card p-2.5">
+      <code className="w-full break-all font-mono text-xs sm:w-48 sm:shrink-0">{name}</code>
       <TokenPicker values={values} onChange={setValues} tokens={policy.tokens} slot={slot} />
-      <Button disabled={!dirty || issues.length > 0} onClick={() => onStage(values)}>
-        Stage
-      </Button>
-      <Button variant="ghost" onClick={onDelete}>
-        Delete
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button disabled={!dirty || issues.length > 0} onClick={() => onStage(values)}>
+          Stage
+        </Button>
+        <IconButton icon={Trash2} variant="danger" label={`Delete ${name}`} onClick={onDelete} />
+      </div>
       {issues.length > 0 && (
         <ul className="w-full space-y-0.5 text-xs text-danger">
           {issues.map((issue) => <li key={issue.token}><span className="font-mono">{issue.token}</span> — {issue.reason}</li>)}
@@ -580,9 +573,10 @@ function HostsTab({ policy, pending, queue }: { policy: Policy; pending: PatchOp
   const entries = Object.entries(schemaWithPendingChanges(policy.schema, pending).hosts ?? {})
   const [name, setName] = useState('')
   const [cidr, setCidr] = useState('')
+  const hostProblem = hostEntryProblem(name, cidr, entries.map(([host]) => host))
 
   return (
-    <Section title="hosts">
+    <Section title="Hosts">
       {entries.length === 0 && <Empty title="No hosts defined" hint="A host is a name for a CIDR." />}
 
       <ul className="space-y-2">
@@ -596,13 +590,13 @@ function HostsTab({ policy, pending, queue }: { policy: Policy; pending: PatchOp
         ))}
       </ul>
 
-      <div className="flex items-center gap-2">
-        <Input value={name} onChange={setName} placeholder="office-lan" className="w-48" />
-        <Input value={cidr} onChange={setCidr} placeholder="10.0.0.0/24" className="w-48" />
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <Input value={name} onChange={setName} placeholder="office-lan" className="w-full sm:w-48" />
+        <Input value={cidr} onChange={setCidr} placeholder="10.0.0.0/24" className="w-full sm:w-48" />
         <Button
-          disabled={name === '' || cidr === ''}
+          disabled={name.trim() === '' || cidr.trim() === '' || hostProblem !== null}
           onClick={() => {
-            queue(newMapEntryPatch(policy.schema, pending, 'hosts', name, cidr))
+            queue(newMapEntryPatch(policy.schema, pending, 'hosts', name.trim(), cidr.trim()))
             setName('')
             setCidr('')
           }}
@@ -610,6 +604,7 @@ function HostsTab({ policy, pending, queue }: { policy: Policy; pending: PatchOp
           Add
         </Button>
       </div>
+      {hostProblem && <p className="text-xs text-danger">{hostProblem}</p>}
     </Section>
   )
 }
@@ -618,18 +613,16 @@ function HostRow({ host, value, queue }: { host: string; value: string; queue: (
   const [cidr, setCidr] = useState(value)
 
   return (
-    <li className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-1 p-2.5">
-      <code className="w-48 font-mono text-xs">{host}</code>
-      <Input value={cidr} onChange={setCidr} className="min-w-48 flex-1 font-mono text-xs" />
+    <li className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-1 shadow-card p-2.5">
+      <code className="w-full break-all font-mono text-xs sm:w-48">{host}</code>
+      <Input value={cidr} onChange={setCidr} className="min-w-0 flex-1 font-mono text-xs sm:min-w-48" />
       <Button
         disabled={cidr.trim() === '' || cidr === value}
         onClick={() => queue({ op: 'replace', path: `/hosts/${escape(host)}`, value: cidr.trim() })}
       >
         Stage
       </Button>
-      <Button variant="ghost" onClick={() => queue({ op: 'remove', path: `/hosts/${escape(host)}` })}>
-        Delete
-      </Button>
+      <IconButton icon={Trash2} variant="danger" label={`Delete host ${host}`} onClick={() => queue({ op: 'remove', path: `/hosts/${escape(host)}` })} />
     </li>
   )
 }
@@ -639,7 +632,7 @@ function SshTab({ policy, pending, queue }: { policy: Policy; pending: PatchOp[]
 
   return (
     <Section
-      title="ssh"
+      title="SSH rules"
       actions={
         <Button
           onClick={() =>
@@ -687,14 +680,14 @@ function SshRow({
   const dirty = JSON.stringify(next) !== JSON.stringify(rule)
 
   return (
-    <li className="space-y-3 rounded-lg border border-border bg-surface-1 p-3">
+    <li className="space-y-3 rounded-lg border border-border bg-surface-1 shadow-card p-3">
       <div className="flex flex-wrap items-end gap-2">
         <div>
           <span className="text-xs text-muted-foreground">action</span>
           <select
             value={action}
             onChange={(event) => setAction(event.target.value)}
-            className="block rounded-md border border-border bg-surface-1 px-2 py-1.5 text-sm"
+            className="block h-10 rounded-lg border border-border bg-surface-1 px-2 text-sm md:h-9"
           >
             <option value="accept">accept</option>
             <option value="check">check</option>
@@ -721,9 +714,7 @@ function SshRow({
         <Button disabled={!dirty || src.length === 0 || dst.length === 0 || nextUsers.length === 0 || issues.length > 0} onClick={() => queue({ op: 'replace', path: `/ssh/${index}`, value: next })}>
           Stage
         </Button>
-        <Button variant="ghost" icon={Trash2} onClick={() => queue({ op: 'remove', path: `/ssh/${index}` })}>
-          Delete
-        </Button>
+        <IconButton icon={Trash2} variant="danger" label={`Delete SSH rule #${index}`} onClick={() => queue({ op: 'remove', path: `/ssh/${index}` })} />
       </div>
       {issues.length > 0 && (
         <ul className="space-y-0.5 text-xs text-danger">
@@ -749,7 +740,7 @@ function AutoApproversTab({
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">These entries approve route advertisements automatically. They do not grant traffic; use a Grant for access permission.</p>
       <AutoApproverMap
-        title="routes"
+        title="Routes"
         entries={auto?.routes ?? {}}
         policy={policy}
         placeholder="10.0.0.0/24"
@@ -826,7 +817,7 @@ function ExitNodeApprovers({
   const dirty = JSON.stringify(values) !== JSON.stringify(owners)
 
   return (
-    <Section title="exit nodes">
+    <Section title="Exit nodes">
       <div className="flex flex-wrap items-end gap-2">
         <div className="min-w-64 flex-1">
           <span className="text-xs text-muted-foreground">approved for</span>

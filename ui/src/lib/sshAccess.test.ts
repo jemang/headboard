@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { sshAgentInstallCommand, sshNewMachineCommand, tokenFor, userTokens, visibleRows, insecureInstallUrl, revokeRefusal, saveCleanup, loadCleanup, sshAgentOneLiner, withRow, idsFromTokens } from './sshAccess'
+import { sshAgentInstallCommand, sshNewMachineCommand, tokenFor, userTokens, visibleRows, insecureInstallUrl, revokeRefusal, saveCleanup, loadCleanup, sshAgentOneLiner, withRow, idsFromTokens, pickableTokens } from './sshAccess'
 import type { SshAccess as SshAccessData } from './api'
 import { ApiError } from './api'
 
@@ -129,5 +129,21 @@ describe('idsFromTokens', () => {
   it('keeps unresolved #id chips', () => {
     const tokens = new Map([['alice', 1]])
     expect(idsFromTokens(tokens, ['alice', '#9', 'nobody'])).toEqual([1, 9])
+  })
+})
+
+describe('pickableTokens', () => {
+  const users = [
+    { id: 1, name: 'alice', keys: 2 },
+    { id: 2, name: 'bob', keys: 0 },
+    { id: 3, name: 'carol', keys: 1 },
+  ]
+
+  it('offers only people who hold an SSH key', () => {
+    expect(pickableTokens(userTokens(users), users)).toEqual(['alice', 'carol'])
+  })
+
+  it('treats an unknown key count as able to log in', () => {
+    expect(pickableTokens(userTokens([{ id: 4, name: 'dave' }]), [{ id: 4, name: 'dave' }])).toEqual(['dave'])
   })
 })

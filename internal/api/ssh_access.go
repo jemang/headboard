@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -70,6 +71,16 @@ type SSHOrphanView struct {
 type SSHAccessView struct {
 	Servers []SSHServerView `json:"servers"`
 	Orphans []SSHOrphanView `json:"orphans"`
+	// People is every Headscale user with how many SSH keys they hold, so the
+	// UI can offer only people who could actually log in.
+	People []SSHPerson `json:"people"`
+}
+
+// SSHPerson is a Headscale user as the SSH page sees them.
+type SSHPerson struct {
+	ID   uint64 `json:"id"`
+	Name string `json:"name"`
+	Keys int    `json:"keys"`
 }
 
 // policyHosts reads the hosts map from the snapshot's policy text. An
@@ -260,7 +271,11 @@ func buildAccess(s sshState) SSHAccessView {
 		bindingFor[t.HostName] = t
 	}
 
-	v := SSHAccessView{Servers: []SSHServerView{}, Orphans: []SSHOrphanView{}}
+	v := SSHAccessView{Servers: []SSHServerView{}, Orphans: []SSHOrphanView{}, People: []SSHPerson{}}
+	for id, name := range s.users {
+		v.People = append(v.People, SSHPerson{ID: id, Name: name, Keys: keyCount[id]})
+	}
+	slices.SortFunc(v.People, func(a, b SSHPerson) int { return strings.Compare(a.Name, b.Name) })
 
 	for _, sv := range s.servers {
 		view := SSHServerView{Name: sv.Name, IP: sv.IP, Suggestions: []SSHSuggestion{}, Rows: []SSHRowView{}, PendingClears: []string{}}

@@ -5,10 +5,9 @@ export type Theme = 'dark' | 'light'
 const KEY = 'headboard:theme'
 
 /**
- * Dark is the default, not an inversion of a light theme: this is an operations
- * console people keep open all day. `index.html` ships with `class="dark"`
- * already on <html>, so the first paint is dark and there is no flash before
- * this hook runs — only a stored preference for light moves it.
+ * Light is the default. `index.html` ships without `class="dark"`, so the first
+ * paint is light and there is no flash before this hook runs; only a stored
+ * preference for dark moves it.
  */
 export function useTheme(): [Theme, (t: Theme) => void] {
   const [theme, setTheme] = useState<Theme>(stored)
@@ -28,10 +27,15 @@ export function useTheme(): [Theme, (t: Theme) => void] {
   return [theme, setTheme]
 }
 
+/** A stored value, or nothing stored, as a theme. Anything but "dark" is light. */
+export function parseTheme(value: string | null): Theme {
+  return value === 'dark' ? 'dark' : 'light'
+}
+
 function stored(): Theme {
   try {
-    return localStorage.getItem(KEY) === 'light' ? 'light' : 'dark'
+    return parseTheme(localStorage.getItem(KEY))
   } catch {
-    return 'dark'
+    return 'light'
   }
 }

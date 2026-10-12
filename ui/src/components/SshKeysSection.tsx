@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
 import { api, type SshKey } from '../lib/api'
-import { Button, Confirm, Empty, ErrorNote, Input, Mono, Section } from './ui'
+import { Badge, Button, Confirm, Empty, ErrorNote, Input, Section, IconButton } from './ui'
 import { useToast } from './toastContext'
 import { Loading, SkeletonRows } from './Skeleton'
 
@@ -52,36 +52,38 @@ export function SshKeysSection({ userId, userName }: { userId: number; userName:
         {keys.data?.keys.length === 0 && (
           <Empty title="No SSH keys" hint="Keys added here are written to every server where this person is assigned." />
         )}
-        <ul className="divide-y divide-border rounded-lg border border-border">
-          {keys.data?.keys.map((k) => (
-            <li key={k.id} className="flex items-center gap-3 px-3 py-2 text-sm">
-              <span className="w-24 shrink-0 font-mono text-xs text-muted-foreground">{k.type}</span>
-              <span className="min-w-0 flex-1 truncate">{k.label || '—'}</span>
-              <Mono value={k.fingerprint} />
-              <button
-                type="button"
-                aria-label={`Remove key ${k.label || k.fingerprint}`}
-                className="rounded p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground"
-                onClick={() => setRemoving(k)}
-              >
-                <Trash2 className="size-4" aria-hidden />
-              </button>
-            </li>
-          ))}
-        </ul>
-        <div className="grid gap-2 sm:grid-cols-[1fr_10rem_auto]">
+        {(keys.data?.keys.length ?? 0) > 0 && (
+          <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface-1 shadow-card">
+            {keys.data?.keys.map((k) => (
+              <li key={k.id} className="flex items-center gap-3 px-3 py-2.5 text-sm">
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-2">
+                    <span className="truncate font-medium">{k.label || 'Unlabelled key'}</span>
+                    <Badge>{k.type}</Badge>
+                  </p>
+                  {/* Fingerprints have no break points; let them wrap inside the row. */}
+                  <p className="mt-0.5 break-all font-mono text-xs text-muted-foreground">{k.fingerprint}</p>
+                </div>
+                <IconButton icon={Trash2} variant="danger" label={`Remove key ${k.label || k.fingerprint}`} onClick={() => setRemoving(k)} />
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="space-y-2">
           <textarea
             value={publicKey}
             onChange={(e) => setPublicKey(e.target.value)}
             placeholder="Paste a public key (ssh-ed25519 AAAA…)"
             aria-label="Paste a public key"
-            rows={2}
-            className="rounded-lg border border-border bg-surface-1 px-2 py-1.5 font-mono text-xs"
+            rows={3}
+            className="block w-full rounded-lg border border-border bg-surface-1 px-3 py-2 font-mono text-xs placeholder:text-muted-foreground focus:border-accent-500 focus:outline-none"
           />
-          <Input value={label} onChange={setLabel} placeholder="Label, e.g. laptop" />
-          <Button variant="primary" icon={Plus} disabled={publicKey.trim() === '' || add.isPending} onClick={() => add.mutate()}>
-            Add key
-          </Button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input value={label} onChange={setLabel} placeholder="Label, e.g. laptop" className="sm:flex-1" />
+            <Button variant="primary" icon={Plus} disabled={publicKey.trim() === '' || add.isPending} onClick={() => add.mutate()}>
+              Add key
+            </Button>
+          </div>
         </div>
       </div>
       <Confirm

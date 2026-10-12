@@ -189,3 +189,17 @@ func TestStatusForMapsNotFoundTo404(t *testing.T) {
 		t.Fatalf("other error → %d", got)
 	}
 }
+
+func TestBuildAccessListsPeopleWithKeyCounts(t *testing.T) {
+	v := buildAccess(fixtureState(t))
+
+	want := []SSHPerson{{ID: 1, Name: "alice", Keys: 1}, {ID: 2, Name: "bob", Keys: 0}}
+	if len(v.People) != len(want) {
+		t.Fatalf("people = %+v", v.People)
+	}
+	for i := range want {
+		if v.People[i] != want[i] {
+			t.Fatalf("people[%d] = %+v, want %+v", i, v.People[i], want[i])
+		}
+	}
+}

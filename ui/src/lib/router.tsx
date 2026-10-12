@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { stripBase, withBase } from './basePath'
 import { RouterContext, useRouter } from './routerContext'
+import { parseLocation } from './routes'
 
 /**
  * A ~50-line router, deliberately.
@@ -11,14 +12,19 @@ import { RouterContext, useRouter } from './routerContext'
  * If routes start nesting, replace this — the surface is Link and useRoute.
  */
 
+function currentHref() {
+  return stripBase(window.location.pathname) + window.location.search + window.location.hash
+}
+
 export function Router({ children }: { children: ReactNode }) {
   // Routes are written without the deployment's base path, so a route table
   // does not change when the app moves from / to /manage. The base is added
-  // back on the way into history and stripped on the way out.
-  const [path, setPath] = useState(() => stripBase(window.location.pathname))
+  // back on the way into history and stripped on the way out. Query and hash
+  // ride along so pages can hand off to each other (?device=3, #needs).
+  const [href, setHref] = useState(currentHref)
 
   useEffect(() => {
-    const onPop = () => setPath(stripBase(window.location.pathname))
+    const onPop = () => setHref(currentHref())
     window.addEventListener('popstate', onPop)
 
     return () => window.removeEventListener('popstate', onPop)
@@ -26,13 +32,15 @@ export function Router({ children }: { children: ReactNode }) {
 
   const navigate = useCallback((to: string, opts?: { replace?: boolean }) => {
     const target = withBase(to)
-    if (target === window.location.pathname) return
+    if (target === window.location.pathname + window.location.search + window.location.hash) return
 
     window.history[opts?.replace ? 'replaceState' : 'pushState']({}, '', target)
-    setPath(to)
+    setHref(to)
   }, [])
 
-  return <RouterContext value={{ path, navigate }}>{children}</RouterContext>
+  const loc = useMemo(() => parseLocation(href), [href])
+
+  return <RouterContext value={{ ...loc, navigate }}>{children}</RouterContext>
 }
 
 export function Link({

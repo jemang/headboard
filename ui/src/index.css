@@ -3,21 +3,22 @@
   themes: false;
 }
 
-/* Dark is the default theme, not an inversion of a light one: this is an
-   operations console that people keep open all day. `.dark` on <html> selects
-   it; the light palette below is the fallback for people who ask for it. */
+/* Light is the default theme. `.dark` on <html> selects the dark palette for
+   people who ask for it; it is tuned on its own, not an inversion of light. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* System stacks: native inside an installed PWA and nothing to download.
+     Inter was declared here once but never loaded. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
 
   /* One accent. Status is carried by a dot plus a label, never by colour
      alone, so the palette stays small on purpose. */
-  --color-accent-400: oklch(0.85 0.11 174);
-  --color-accent-500: oklch(0.78 0.12 174);
-  --color-accent-600: oklch(0.67 0.13 174);
-  --color-accent-700: oklch(0.54 0.12 174);
+  --color-accent-400: oklch(0.8 0.13 182);
+  --color-accent-500: oklch(0.704 0.123 183);
+  --color-accent-600: oklch(0.6 0.105 185);
+  --color-accent-700: oklch(0.511 0.086 186);
 
   /* Status colours are runtime variables for the same reason the surfaces are:
      a hue tuned to read on a dark background is washed out on a light one.
@@ -37,17 +38,45 @@
   --color-foreground: var(--text);
   --color-muted-foreground: var(--text-muted);
 
+  /* The shell (rail, phone header, bottom bar, health band) is tinted
+     teal-ink so the work area reads as the neutral part of the screen. */
+  --color-rail: var(--rail);
+  --color-rail-border: var(--rail-border);
+  --color-rail-fg: var(--rail-fg);
+  --color-rail-muted: var(--rail-muted);
+  --color-attention: var(--warn);
+
+  /* The desktop sidebar and login panel. Light in the light theme (a white to
+     mint gradient), ink in the dark one. Kept apart from the rail tokens because
+     the phone header must stay ink: an installed iOS app draws white status-bar
+     text over it. */
+  --color-side: var(--side);
+  --color-side-border: var(--side-border);
+  --color-side-fg: var(--side-fg);
+  --color-side-muted: var(--side-muted);
+  --color-side-active: var(--side-active);
+  --color-side-active-fg: var(--side-active-fg);
+  --color-side-hover: var(--side-hover);
+  --color-side-art: var(--side-art);
+
   /* A type scale, so routes stop picking sizes ad hoc. `display` is for page
      titles, `eyebrow` for the small uppercase section headings. */
   --text-eyebrow: 0.6875rem;
   --text-eyebrow--line-height: 1rem;
   --text-eyebrow--letter-spacing: 0.06em;
+  --text-title: 1.0625rem;
+  --text-title--line-height: 1.5rem;
+  --text-title--font-weight: 600;
   --text-display: 1.375rem;
   --text-display--line-height: 1.75rem;
   --text-display--letter-spacing: -0.01em;
+  --text-page: 1.75rem;
+  --text-page--line-height: 2.25rem;
+  --text-page--letter-spacing: -0.015em;
 
   /* Two elevations, not five: raised is anything floating above the page
      (drawer, palette, dialog), and everything else is flat with a border. */
+  --shadow-card: var(--card-shadow);
   --shadow-raised: 0 20px 56px -18px oklch(0 0 0 / 0.58), 0 4px 14px -5px oklch(0 0 0 / 0.32);
 
   /* One easing and two durations. Anything slower reads as lag in a console
@@ -57,6 +86,7 @@
   --animate-slide-in: slide-in 0.18s var(--ease-out-quick);
   --animate-rise: rise 0.16s var(--ease-out-quick);
   --animate-pulse-soft: pulse-soft 1.6s ease-in-out infinite;
+  --animate-flip-char: flip-char 0.18s var(--ease-out-quick) both;
 }
 
 @keyframes fade-in {
@@ -79,6 +109,13 @@
   }
 }
 
+@keyframes flip-char {
+  from {
+    transform: rotateX(90deg);
+    opacity: 0;
+  }
+}
+
 @keyframes pulse-soft {
   50% {
     opacity: 0.45;
@@ -87,15 +124,33 @@
 
 @layer base {
   :root {
-    --surface: oklch(0.97 0.006 225);
+    /* Near-white work area with a faint mint wash at the top; white cards
+       carry a soft shadow so they lift off it. */
+    --surface: oklch(0.976 0.003 265);
     --surface-raised: oklch(1 0 0);
-    --surface-sunken: oklch(0.93 0.012 225);
-    --border: oklch(0.88 0.012 225);
-    --text: oklch(0.24 0.025 235);
-    --text-muted: oklch(0.52 0.024 235);
+    --surface-sunken: oklch(0.955 0.004 255);
+    --border: oklch(0.915 0.006 250);
+    --text: oklch(0.22 0.02 255);
+    --text-muted: oklch(0.5 0.02 255);
+    /* The phone header and tab bar are ink in both themes. */
+    --rail: oklch(0.212 0.026 245);
+    --rail-border: oklch(0.277 0.028 243);
+    --rail-fg: oklch(0.946 0.008 237);
+    --rail-muted: oklch(0.748 0.026 239);
+    --side: oklch(0.99 0.004 190);
+    --side-bg: linear-gradient(180deg, oklch(0.993 0.003 190) 0%, oklch(0.975 0.014 183) 55%, oklch(0.945 0.03 181) 100%);
+    --side-border: oklch(0.915 0.012 200);
+    --side-fg: oklch(0.25 0.03 245);
+    --side-muted: oklch(0.46 0.025 240);
+    --side-active: oklch(0.93 0.045 180);
+    --side-active-fg: var(--color-accent-700);
+    --side-hover: oklch(0.95 0.022 185);
+    --side-art: oklch(0.72 0.08 185);
+    --page-bg: linear-gradient(180deg, oklch(0.987 0.006 190) 0%, oklch(0.976 0.004 240) 55%);
+    --card-shadow: 0 1px 2px oklch(0.3 0.03 240 / 0.05), 0 1px 4px -1px oklch(0.3 0.03 240 / 0.04);
 
     --ok: oklch(0.5 0.13 166);
-    --warn: oklch(0.58 0.13 77);
+    --warn: oklch(0.5 0.13 77);
     --danger: oklch(0.54 0.18 27);
 
     --color-base-100: var(--surface-raised);
@@ -116,6 +171,21 @@
     --border: oklch(0.3 0.024 235);
     --text: oklch(0.95 0.012 220);
     --text-muted: oklch(0.69 0.023 225);
+    --rail: oklch(0.212 0.026 245);
+    --rail-border: oklch(0.277 0.028 243);
+    --rail-fg: oklch(0.946 0.008 237);
+    --rail-muted: oklch(0.748 0.026 239);
+    --side: oklch(0.212 0.026 245);
+    --side-bg: var(--side);
+    --side-border: oklch(0.277 0.028 243);
+    --side-fg: oklch(0.946 0.008 237);
+    --side-muted: oklch(0.748 0.026 239);
+    --side-active: oklch(0.704 0.123 183 / 0.16);
+    --side-active-fg: var(--color-accent-400);
+    --side-hover: oklch(1 0 0 / 0.06);
+    --side-art: oklch(0.6 0.08 185 / 0.3);
+    --page-bg: var(--surface);
+    --card-shadow: none;
 
     --ok: oklch(0.8 0.12 166);
     --warn: oklch(0.84 0.13 77);
@@ -131,6 +201,8 @@
 
   html {
     background: var(--surface);
+    background-image: var(--page-bg);
+    background-attachment: fixed;
     color: var(--text);
   }
 
@@ -139,7 +211,6 @@
     -webkit-font-smoothing: antialiased;
     margin: 0;
     min-height: 100dvh;
-    background-image: radial-gradient(circle at top right, oklch(0.75 0.1 174 / 0.09), transparent 32rem);
   }
 
   ::selection {
@@ -176,4 +247,26 @@
       transition-duration: 0.01ms !important;
     }
   }
+}
+
+/* 16px stops iOS Safari zooming the page when a field takes focus. Unlayered
+   on purpose: it has to beat the text-sm utility controls carry on desktop. */
+@media (max-width: 47.999rem) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* Fields share the 40px phone control height. Inputs inside a token box are
+     marked .bare: the box around them is the field. */
+  select,
+  input:not([type='checkbox']):not([type='radio']):not(.bare) {
+    min-height: 2.5rem;
+  }
+}
+
+/* The sidebar's white to mint wash (a gradient, so not a colour utility). */
+@utility bg-side-wash {
+  background: var(--side-bg);
 }

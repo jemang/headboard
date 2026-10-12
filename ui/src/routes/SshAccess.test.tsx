@@ -10,6 +10,34 @@ const noop = () => {}
 const props = { users: [{ id: 1, name: 'alice' }], onSetRow: noop, onApprove: noop, onUnbind: noop }
 
 describe('ServerCard', () => {
+  it('lets each unix user row be removed', () => {
+    const html = renderToStaticMarkup(
+      <ServerCard
+        {...props}
+        server={{ ...base, rows: [{ unixUser: 'deploy', users: [{ id: 1, name: 'alice', keys: 1, missing: false }], warnings: [] }] }}
+      />,
+    )
+    expect(html).toContain('aria-label="Remove deploy from app-1"')
+  })
+
+  it('keeps Unbind behind a menu on a bound server', () => {
+    const html = renderToStaticMarkup(
+      <ServerCard
+        {...props}
+        server={{ ...base, binding: { agentId: 7, agentName: 'pve1', targetRef: '105', approvedIp: '192.0.2.10', approvedLabel: 'app', state: 'active', reapprovable: false } }}
+      />,
+    )
+    expect(html).toContain('aria-label="More actions for app-1"')
+    expect(html).toContain('aria-haspopup="menu"')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('>Unbind<')
+  })
+
+  it('says what to do when a server has no unix users yet', () => {
+    const html = renderToStaticMarkup(<ServerCard {...props} server={base} />)
+    expect(html).toContain('No unix users yet. Add one below, then choose who may log in as it.')
+  })
+
   it('offers Approve for a single suggestion and blocks an ambiguous one', () => {
     const single = renderToStaticMarkup(
       <ServerCard {...props} server={{ ...base, suggestions: [{ agentId: 7, agentName: 'pve1', targetRef: '105', hostname: 'app-1', ambiguous: false }] }} />,
@@ -50,7 +78,7 @@ describe('ServerCard', () => {
         }}
       />,
     )
-    expect(markup).toContain('Suspended')
+    expect(markup).toContain('>suspended<')
     expect(markup).toContain('Re-approve')
     expect(markup).toContain('root login')
     expect(markup).toContain('unix user does not exist')
