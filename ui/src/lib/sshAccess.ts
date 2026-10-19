@@ -152,3 +152,51 @@ export function pickableTokens(tokens: Map<string, number>, users: { id: number;
 
   return [...tokens].filter(([, id]) => withKeys.has(id)).map(([token]) => token)
 }
+
+/** Things on a server an admin can act on here: a binding to approve or
+ *  re-approve, two targets claiming its IP, rows the agent could not write, and
+ *  people who cannot log in. A server no agent has reported has nothing to do
+ *  yet, so it is not counted. */
+export function serverIssues(s: SshServer): number {
+  let n = 0
+  if (s.binding ? s.binding.state !== 'active' : s.suggestions.length > 0) n++
+  for (const r of s.rows) {
+    n += r.warnings.length
+    n += r.users.filter((u) => u.missing || u.keys === 0).length
+  }
+
+  return n
+}
+
+export type ServerFilter = 'all' | 'attention' | 'active' | 'unbound'
+
+/** Matches name, IP, agent, CT, unix users and the people on them. */
+export function serverMatches(s: SshServer, query: string, filter: ServerFilter): boolean {
+  if (filter === 'attention' && serverIssues(s) === 0) return false
+  if (filter === 'active' && s.binding?.state !== 'active') return false
+  if (filter === 'unbound' && s.binding) return false
+
+  const q = query.trim().toLowerCase()
+  if (q === '') return true
+  const hay = [
+    s.name,
+    s.ip,
+    s.binding ? `${s.binding.agentName} ct ${s.binding.targetRef}` : '',
+    ...s.rows.flatMap((r) => [r.unixUser, ...r.users.map((u) => u.name)]),
+  ]
+
+  return hay.some((v) => v.toLowerCase().includes(q))
+}
+
+/** Servers under the agent that writes their keys, by name; unbound servers last. */
+export function groupByAgent(servers: SshServer[]): { agent: string | null; servers: SshServer[] }[] {
+  const groups = new Map<string | null, SshServer[]>()
+  for (const s of [...servers].sort((a, b) => a.name.localeCompare(b.name))) {
+    const key = s.binding?.agentName ?? null
+    groups.set(key, [...(groups.get(key) ?? []), s])
+  }
+
+  return [...groups.entries()]
+    .sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)))
+    .map(([agent, list]) => ({ agent, servers: list }))
+}

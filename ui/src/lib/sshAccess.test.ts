@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { sshAgentInstallCommand, sshNewMachineCommand, tokenFor, userTokens, visibleRows, insecureInstallUrl, revokeRefusal, saveCleanup, loadCleanup, sshAgentOneLiner, withRow, idsFromTokens, pickableTokens } from './sshAccess'
-import type { SshAccess as SshAccessData } from './api'
+import { sshAgentInstallCommand, sshNewMachineCommand, tokenFor, userTokens, visibleRows, insecureInstallUrl, revokeRefusal, saveCleanup, loadCleanup, sshAgentOneLiner, withRow, idsFromTokens, pickableTokens, serverIssues, serverMatches, groupByAgent } from './sshAccess'
+import type { SshAccess as SshAccessData, SshServer } from './api'
 import { ApiError } from './api'
 
 describe('userTokens', () => {
@@ -145,5 +145,44 @@ describe('pickableTokens', () => {
 
   it('treats an unknown key count as able to log in', () => {
     expect(pickableTokens(userTokens([{ id: 4, name: 'dave' }]), [{ id: 4, name: 'dave' }])).toEqual(['dave'])
+  })
+})
+
+describe('server finding', () => {
+  const srv = (name: string, extra: Partial<SshServer> = {}): SshServer => ({ name, ip: '10.0.0.1', suggestions: [], rows: [], pendingClears: [], ...extra })
+  const bound = (agentName: string, state: 'active' | 'suspended' = 'active') => ({ agentId: 1, agentName, targetRef: '150', approvedIp: '10.0.0.1', approvedLabel: '', state, reapprovable: false })
+
+  it('counts a binding to approve, agent warnings and people who cannot log in', () => {
+    expect(serverIssues(srv('a', { binding: bound('pve') }))).toBe(0)
+    // Nothing reported this IP yet: nothing to do on this page.
+    expect(serverIssues(srv('a'))).toBe(0)
+    expect(serverIssues(srv('a', { suggestions: [{ agentId: 1, agentName: 'pve', targetRef: '150', hostname: 'a', ambiguous: false }] }))).toBe(1)
+    expect(
+      serverIssues(srv('a', {
+        binding: bound('pve', 'suspended'),
+        rows: [{ unixUser: 'deploy', warnings: ['unix user does not exist'], users: [{ id: 1, name: 'al', keys: 0, missing: false }] }],
+      })),
+    ).toBe(3)
+  })
+
+  it('finds a server by unix user, person, agent or CT and applies the filter', () => {
+    const s = srv('etempahan-mdp', { binding: bound('sgp-ns563693'), rows: [{ unixUser: 'pentadbir', warnings: [], users: [{ id: 1, name: 'azman-mini', keys: 1, missing: false }] }] })
+    expect(serverMatches(s, 'PENTAD', 'all')).toBe(true)
+    expect(serverMatches(s, 'azman', 'all')).toBe(true)
+    expect(serverMatches(s, 'ct 150', 'all')).toBe(true)
+    expect(serverMatches(s, 'berapay', 'all')).toBe(false)
+    expect(serverMatches(s, '', 'attention')).toBe(false)
+    expect(serverMatches(s, '', 'unbound')).toBe(false)
+    expect(serverMatches(srv('x'), '', 'unbound')).toBe(true)
+    expect(serverMatches(srv('x'), '', 'attention')).toBe(false)
+  })
+
+  it('groups by agent, sorted, with unbound servers last', () => {
+    const groups = groupByAgent([srv('z', { binding: bound('pve2') }), srv('loose'), srv('b', { binding: bound('pve1') }), srv('a', { binding: bound('pve2') })])
+    expect(groups.map((g) => [g.agent, g.servers.map((s) => s.name)])).toEqual([
+      ['pve1', ['b']],
+      ['pve2', ['a', 'z']],
+      [null, ['loose']],
+    ])
   })
 })

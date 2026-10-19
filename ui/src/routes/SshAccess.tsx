@@ -3,15 +3,22 @@ import { unixUserProblem } from '../lib/formHints'
 import { cn } from '../lib/cn'
 import { useRouter } from '../lib/routerContext'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CircleAlert, Info, KeyRound, Link2, Link2Off, Plus, RotateCw, Server, Trash2 } from 'lucide-react'
+import { ChevronRight, CircleAlert, Info, KeyRound, Link2, Link2Off, Plus, RotateCw, Search, Server, Trash2 } from 'lucide-react'
 import { api, type SshAccess as SshAccessData, type SshAgent, type SshServer } from '../lib/api'
 import { Badge, Button, Confirm, Empty, ErrorNote, Input, Menu, Mono, Section, Status, IconButton } from '../components/ui'
 import { TagSelector } from '../components/TagSelector'
 import { useToast } from '../components/toastContext'
 import { CommandCard } from './Help'
-import { headboardUrl, sshAgentInstallCommand, sshNewMachineCommand, tokenFor, userTokens, visibleRows, insecureInstallUrl, revokeRefusal, saveCleanup, loadCleanup, sshAgentOneLiner, withRow, idsFromTokens, pickableTokens } from '../lib/sshAccess'
+import { headboardUrl, sshAgentInstallCommand, sshNewMachineCommand, tokenFor, userTokens, visibleRows, insecureInstallUrl, revokeRefusal, saveCleanup, loadCleanup, sshAgentOneLiner, withRow, idsFromTokens, pickableTokens, serverIssues, serverMatches, groupByAgent, type ServerFilter } from '../lib/sshAccess'
 
 type User = { id: number; name: string; keys?: number }
+
+const FILTERS: { id: ServerFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'attention', label: 'Needs attention' },
+  { id: 'active', label: 'Active' },
+  { id: 'unbound', label: 'Not bound' },
+]
 
 /** The /ssh route. The server enforces manage:ssh regardless; this keeps other
  *  roles from a page of polling 403s and a form they cannot use. */
@@ -29,6 +36,16 @@ export function SshAccess() {
   const access = useQuery({ queryKey: ['ssh-access'], queryFn: api.sshAccess, refetchInterval: 15000 })
   const target = useRouter().search.get('server')
   const [highlight, setHighlight] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<ServerFilter>('all')
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const toggle = (name: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(name)) next.add(name)
+
+      return next
+    })
 
   // Arrived from "is suspended" in the needs list: bring that server into view
   // and mark it briefly once the list has loaded.
@@ -36,6 +53,7 @@ export function SshAccess() {
   useEffect(() => {
     if (!target || !loaded) return
 
+    setOpen((prev) => new Set(prev).add(target))
     document.getElementById(`server-${target}`)?.scrollIntoView({ block: 'start' })
     setHighlight(target)
     const t = setTimeout(() => setHighlight(null), 2000)
@@ -94,6 +112,14 @@ export function SshAccess() {
   // The access response carries key counts; the users list is the fallback
   // while it loads, and for a server that predates the people field.
   const people: User[] = access.data?.people ?? users.data?.users.map((u) => ({ id: u.id, name: u.name })) ?? []
+  const servers = access.data?.servers ?? []
+  const counts: Record<ServerFilter, number> = {
+    all: servers.length,
+    attention: servers.filter((s) => serverMatches(s, '', 'attention')).length,
+    active: servers.filter((s) => serverMatches(s, '', 'active')).length,
+    unbound: servers.filter((s) => serverMatches(s, '', 'unbound')).length,
+  }
+  const groups = groupByAgent(servers.filter((s) => serverMatches(s, query, filter)))
 
   return (
     <div className="space-y-6">
@@ -117,28 +143,96 @@ export function SshAccess() {
         <Empty icon={KeyRound} title="No servers yet" hint="Add a single-IP entry in Access control → Hosts first." />
       )}
 
-      <div className="grid gap-4">
-        {access.data?.servers.map((s) => (
-          <ServerCard
-            key={s.name}
-            server={s}
-            users={people}
-            onSetRow={(unixUser, ids) => saveRow(s.name, unixUser, ids)}
-            onApprove={(agentId, ref) => approve.mutate({ host: s.name, agentId, ref })}
-            onUnbind={() => setUnbinding(s.name)}
-            highlighted={s.name === highlight}
-          />
-        ))}
-      </div>
+      {servers.length > 0 && (
+        <div className="space-y-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            <div className="relative md:w-80">
+              <Search
+                aria-hidden
+                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                strokeWidth={1.5}
+              />
+              <Input value={query} onChange={setQuery} placeholder="Find a server, IP, unix user or person" className="w-full pl-9" />
+            </div>
+            <div role="radiogroup" aria-label="Show" className="-mx-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:overflow-visible md:px-0 [&::-webkit-scrollbar]:hidden">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={filter === f.id}
+                  onClick={() => setFilter(f.id)}
+                  className={cn(
+                    'inline-flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-sm transition-colors md:h-9',
+                    filter === f.id
+                      ? 'border-accent-500/50 bg-accent-500/15 font-medium text-accent-700 dark:text-accent-400'
+                      : 'border-border text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {f.label}
+                  <span className={cn('font-mono text-xs tabular-nums', f.id === 'attention' && counts.attention > 0 && filter !== f.id && 'text-warn')}>
+                    {counts[f.id]}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {groups.length === 0 && (
+            <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+              No server matches{query.trim() ? ` "${query.trim()}"` : ''} in {FILTERS.find((f) => f.id === filter)?.label.toLowerCase()}.
+            </p>
+          )}
+
+          {groups.map((g) => (
+            <section key={g.agent ?? ''} className="space-y-2" aria-label={g.agent ? `Servers on ${g.agent}` : 'Servers not bound to an agent'}>
+              <h2 className="flex items-baseline gap-2 px-1 text-sm">
+                <span className="font-semibold">{g.agent ?? 'Not bound to an agent'}</span>
+                <span className="text-muted-foreground">
+                  {g.servers.length} {g.servers.length === 1 ? 'server' : 'servers'}
+                </span>
+              </h2>
+              <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface-1 shadow-card">
+                {g.servers.map((s) => (
+                  <ServerCard
+                    key={s.name}
+                    server={s}
+                    users={people}
+                    open={open.has(s.name)}
+                    onToggle={() => toggle(s.name)}
+                    onSetRow={(unixUser, ids) => saveRow(s.name, unixUser, ids)}
+                    onApprove={(agentId, ref) => approve.mutate({ host: s.name, agentId, ref })}
+                    onUnbind={() => setUnbinding(s.name)}
+                    highlighted={s.name === highlight}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
 
       {access.data && access.data.orphans.length > 0 && (
         <Section title="No longer in the policy">
-          <ul className="space-y-2 text-sm">
+          <p className="-mt-1 text-sm text-muted-foreground">
+            These were removed from Access control → Hosts. Headboard still holds their unix-user rows or binding until you remove them.
+          </p>
+          <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface-1 shadow-card">
             {access.data.orphans.map((o) => (
-              <li key={o.hostName} className="flex flex-wrap items-center gap-2">
-                <Mono value={o.hostName} />
-                <span className="text-muted-foreground">{o.unixUsers.join(', ') || 'binding only'}</span>
-                <IconButton icon={Trash2} variant="danger" label={`Remove ${o.hostName}`} onClick={() => setRemovingOrphan(o.hostName)} />
+              <li key={o.hostName} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5 sm:px-4">
+                <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-full bg-surface-2 text-muted-foreground">
+                  <Server className="size-4" strokeWidth={1.6} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold" title={o.hostName}>{o.hostName}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {o.unixUsers.length > 0 ? `Unix users: ${o.unixUsers.join(', ')}` : 'No unix users'}
+                    {o.bound ? ' · still bound to an agent' : ''}
+                  </p>
+                </div>
+                <Button variant="danger" icon={Trash2} onClick={() => setRemovingOrphan(o.hostName)}>
+                  Remove
+                </Button>
               </li>
             ))}
           </ul>
@@ -176,9 +270,14 @@ export function ServerCard({
   onApprove,
   onUnbind,
   highlighted = false,
+  open = true,
+  onToggle,
 }: {
   server: SshServer
   users: User[]
+  /** Shows the unix-user editor; the collapsed row is a one-line summary. */
+  open?: boolean
+  onToggle?: () => void
   onSetRow: (unixUser: string, ids: number[]) => void
   onApprove: (agentId: number, ref: string) => void
   onUnbind: () => void
@@ -194,36 +293,75 @@ export function ServerCard({
   const unixProblem = unixUserProblem(newUnixUser, rows.map((r) => r.unixUser))
   const b = server.binding
   const ambiguous = server.suggestions.some((s) => s.ambiguous)
+  const issues = serverIssues(server)
+  // Counts, not names: a row can hold many people. The full list is the tooltip.
+  const summary =
+    server.rows.length === 0 ? 'No unix users' : server.rows.map((r) => `${r.unixUser} → ${r.users.length}`).join(' · ')
+  const summaryTitle = server.rows.map((r) => `${r.unixUser}: ${r.users.map((u) => u.name).join(', ') || 'nobody'}`).join('\n')
 
   return (
     <article
       id={`server-${server.name}`}
-      className={cn('scroll-mt-24 rounded-xl border border-border bg-surface-1 p-4 shadow-card transition-shadow sm:p-6', highlighted && 'ring-2 ring-attention')}
+      className={cn('scroll-mt-24 transition-colors', highlighted && 'bg-attention/5 ring-2 ring-inset ring-attention')}
     >
-      <div className="flex items-start gap-3 sm:gap-4">
-        <span
-          aria-hidden
-          className={cn(
-            'grid size-10 shrink-0 place-items-center rounded-full sm:size-12',
-            !b ? 'bg-surface-2 text-muted-foreground' : b.state === 'active' ? 'bg-accent-500/12 text-accent-700 dark:text-accent-400' : 'bg-danger/10 text-danger',
-          )}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5 sm:px-4">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={onToggle}
+          className="-my-1 flex min-h-11 min-w-0 flex-1 basis-64 items-center gap-3 rounded-lg py-1 text-left"
         >
-          <Server className="size-5" strokeWidth={1.6} />
-        </span>
-        <div className="flex min-w-0 flex-1 flex-wrap items-start justify-between gap-x-3 gap-y-1">
-          <div className="min-w-0">
-            <h2 className="break-all text-title">{server.name}</h2>
+          <ChevronRight
+            aria-hidden
+            className={cn('size-4 shrink-0 text-muted-foreground transition-transform duration-150', open && 'rotate-90')}
+            strokeWidth={1.5}
+          />
+          <span
+            aria-hidden
+            className={cn(
+              'grid size-9 shrink-0 place-items-center rounded-full',
+              !b ? 'bg-surface-2 text-muted-foreground' : b.state === 'active' ? 'bg-accent-500/12 text-accent-700 dark:text-accent-400' : 'bg-danger/10 text-danger',
+            )}
+          >
+            <Server className="size-4" strokeWidth={1.6} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-baseline gap-2">
+              <h2 className="truncate text-sm font-semibold" title={server.name}>{server.name}</h2>
+              <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{server.ip}</span>
+              {b && <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">CT {b.targetRef}</span>}
+            </span>
+            <span className="block truncate text-xs text-muted-foreground" title={summaryTitle || undefined}>{summary}</span>
+          </span>
+        </button>
+        <div className="ml-auto flex items-center gap-2 pl-7 sm:pl-0">
+          {issues > 0 && <Badge tone="warn">{issues} to fix</Badge>}
+          {b ? (
+            <>
+              <Status ok={b.state === 'active'} bad={b.state !== 'active'} label={b.state === 'active' ? 'active' : 'suspended'} />
+              {b.state === 'suspended' && b.reapprovable && (
+                <Button icon={Link2} onClick={() => onApprove(b.agentId, b.targetRef)}>Re-approve</Button>
+              )}
+            </>
+          ) : ambiguous ? (
+            <Status ok={false} bad label="conflict" />
+          ) : server.suggestions.length === 1 ? (
+            <Button variant="primary" icon={Link2} onClick={() => onApprove(server.suggestions[0].agentId, server.suggestions[0].targetRef)}>
+              Approve
+            </Button>
+          ) : (
+            <Status ok={false} label="not bound" />
+          )}
+          {b && <Menu label={`More actions for ${server.name}`} items={[{ label: 'Unbind', icon: Link2Off, danger: true, onSelect: onUnbind }]} />}
+        </div>
+      </div>
+
+      {open && (
+        <div className="space-y-3 border-t border-border bg-surface-2/40 px-3 py-4 sm:px-4 sm:pl-[4.25rem]">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
             <Mono value={server.ip} />
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-sm sm:min-h-9">
             {b ? (
-              <>
-                <Status ok={b.state === 'active'} bad={b.state !== 'active'} label={b.state === 'active' ? 'active' : 'suspended'} />
-                <span className="text-muted-foreground">{b.agentName} / CT {b.targetRef}</span>
-                {b.state === 'suspended' && b.reapprovable && (
-                  <Button icon={Link2} onClick={() => onApprove(b.agentId, b.targetRef)}>Re-approve</Button>
-                )}
-              </>
+              <span className="text-muted-foreground">{b.agentName} / CT {b.targetRef}</span>
             ) : ambiguous ? (
               <span className="text-danger">
                 Two targets report this IP:{' '}
@@ -231,105 +369,99 @@ export function ServerCard({
                 duplicate before approving.
               </span>
             ) : server.suggestions.length === 1 ? (
-              <>
-                <span className="text-muted-foreground">
-                  {server.suggestions[0].agentName} / CT {server.suggestions[0].targetRef} ({server.suggestions[0].hostname})
-                </span>
-                <Button variant="primary" icon={Link2} onClick={() => onApprove(server.suggestions[0].agentId, server.suggestions[0].targetRef)}>
-                  Approve
-                </Button>
-              </>
+              <span className="text-muted-foreground">
+                Reported by {server.suggestions[0].agentName} / CT {server.suggestions[0].targetRef} ({server.suggestions[0].hostname})
+              </span>
             ) : (
               <span className="text-muted-foreground">No agent has reported this IP yet.</span>
             )}
           </div>
-        </div>
-        {b && <Menu label={`More actions for ${server.name}`} items={[{ label: 'Unbind', icon: Link2Off, danger: true, onSelect: onUnbind }]} />}
-      </div>
 
-      {b?.state === 'suspended' && (
-        <p className="mt-4 flex gap-2.5 rounded-lg bg-surface-2 px-3 py-2.5 text-sm text-muted-foreground">
-          <Info aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={1.6} />
-          <span>
-            The approved IP was {b.approvedIp}. Nothing is written or cleared until someone with SSH access re-approves.
-            {!b.reapprovable && ` Waiting for ${b.agentName} to report CT ${b.targetRef} at ${server.ip}; or unbind it.`}
-          </span>
-        </p>
-      )}
+          {b?.state === 'suspended' && (
+            <p className="flex gap-2.5 rounded-lg bg-surface-2 px-3 py-2.5 text-sm text-muted-foreground">
+              <Info aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={1.6} />
+              <span>
+                The approved IP was {b.approvedIp}. Nothing is written or cleared until someone with SSH access re-approves.
+                {!b.reapprovable && ` Waiting for ${b.agentName} to report CT ${b.targetRef} at ${server.ip}; or unbind it.`}
+              </span>
+            </p>
+          )}
 
-      <div className="mt-4 space-y-3">
-        {rows.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-border px-4 py-4 text-center text-sm text-muted-foreground">
-            No unix users yet. Add one below, then choose who may log in as it.
-          </p>
-        ) : (
-          <div className="divide-y divide-border rounded-lg border border-border">
-            {rows.map((r) => (
-              <div key={r.unixUser} className="grid gap-2 px-3 py-3 sm:grid-cols-[10rem_1fr] sm:items-start">
-                <div className="flex items-center gap-2 sm:pt-0.5">
-                  <Mono value={r.unixUser} />
-                  {r.unixUser === 'root' && <Badge tone="danger">root login</Badge>}
-                  {/* An unsaved row only lives in this card; a saved one takes away access, so it asks. */}
-                  <IconButton
-                    icon={Trash2}
-                    variant="danger"
-                    label={`Remove ${r.unixUser} from ${server.name}`}
-                    className="ml-auto"
-                    onClick={() => (r.pending ? setPending(pending.filter((u) => u !== r.unixUser)) : setRemoving(r.unixUser))}
-                  />
-                </div>
-                <div>
-                  <TagSelector
-                    tags={pickableTokens(tokens, users)}
-                    value={r.users.map((u) => tokenFor(tokens, u.id))}
-                    onChange={(next) => onSetRow(r.unixUser, idsFromTokens(tokens, next))}
-                    placeholder="Add a person…"
-                    searchLabel={`Find people for ${r.unixUser}`}
-                    emptyHint="Nobody has an SSH key yet. Add one from People, on the person's sheet."
-                  />
-                  <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                    {r.pending && <span>Not saved yet. Add a person to keep this row.</span>}
-                    {r.users.filter((u) => u.keys === 0 && !u.missing).map((u) => (
-                      <span key={u.id}>{u.name} has no keys</span>
-                    ))}
-                    {r.users.filter((u) => u.missing).map((u) => (
-                      <span key={u.id} className="text-danger">user #{u.id} no longer exists</span>
-                    ))}
-                    {r.warnings.map((w, i) => (
-                      <span key={`${i}-${w}`} className="text-danger">{w}</span>
-                    ))}
+          <div className="space-y-3">
+            {rows.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-border px-4 py-4 text-center text-sm text-muted-foreground">
+                No unix users yet. Add one below, then choose who may log in as it.
+              </p>
+            ) : (
+              <div className="divide-y divide-border rounded-lg border border-border bg-surface-1">
+                {rows.map((r) => (
+                  <div key={r.unixUser} className="grid gap-2 px-3 py-3 sm:grid-cols-[10rem_1fr] sm:items-start">
+                    <div className="flex items-center gap-2 sm:pt-0.5">
+                      <Mono value={r.unixUser} />
+                      {r.unixUser === 'root' && <Badge tone="danger">root login</Badge>}
+                      {/* An unsaved row only lives in this card; a saved one takes away access, so it asks. */}
+                      <IconButton
+                        icon={Trash2}
+                        variant="danger"
+                        label={`Remove ${r.unixUser} from ${server.name}`}
+                        className="ml-auto"
+                        onClick={() => (r.pending ? setPending(pending.filter((u) => u !== r.unixUser)) : setRemoving(r.unixUser))}
+                      />
+                    </div>
+                    <div>
+                      <TagSelector
+                        tags={pickableTokens(tokens, users)}
+                        value={r.users.map((u) => tokenFor(tokens, u.id))}
+                        onChange={(next) => onSetRow(r.unixUser, idsFromTokens(tokens, next))}
+                        placeholder="Add a person…"
+                        searchLabel={`Find people for ${r.unixUser}`}
+                        emptyHint="Nobody has an SSH key yet. Add one from People, on the person's sheet."
+                      />
+                      <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                        {r.pending && <span>Not saved yet. Add a person to keep this row.</span>}
+                        {r.users.filter((u) => u.keys === 0 && !u.missing).map((u) => (
+                          <span key={u.id}>{u.name} has no keys</span>
+                        ))}
+                        {r.users.filter((u) => u.missing).map((u) => (
+                          <span key={u.id} className="text-danger">user #{u.id} no longer exists</span>
+                        ))}
+                        {r.warnings.map((w, i) => (
+                          <span key={`${i}-${w}`} className="text-danger">{w}</span>
+                        ))}
+                      </div>
+                    </div>
                   </div>
-                </div>
+                ))}
               </div>
-            ))}
+            )}
+
+            <div className="flex gap-2">
+              <Input value={newUnixUser} onChange={setNewUnixUser} placeholder="unix user, e.g. deploy" className="min-w-0 flex-1" />
+              <Button
+                icon={Plus}
+                disabled={newUnixUser === '' || unixProblem !== null}
+                onClick={() => {
+                  setPending([...pending, newUnixUser])
+                  setNewUnixUser('')
+                }}
+              >
+                Unix user
+              </Button>
+            </div>
+            {unixProblem && <p className="text-xs text-danger">{unixProblem}</p>}
           </div>
-        )}
 
-        <div className="flex gap-2">
-          <Input value={newUnixUser} onChange={setNewUnixUser} placeholder="unix user, e.g. deploy" className="min-w-0 flex-1" />
-          <Button
-            icon={Plus}
-            disabled={newUnixUser === '' || unixProblem !== null}
-            onClick={() => {
-              setPending([...pending, newUnixUser])
-              setNewUnixUser('')
-            }}
-          >
-            Unix user
-          </Button>
+          {server.pendingClears.length > 0 &&
+            (server.binding?.state === 'suspended' ? (
+              <p className="flex items-start gap-2 text-sm text-warn">
+                <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={1.6} />
+                Not removed yet, server suspended: {server.pendingClears.join(', ')}. Re-approve or unbind to remove.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Clearing: {server.pendingClears.join(', ')}</p>
+            ))}
         </div>
-        {unixProblem && <p className="text-xs text-danger">{unixProblem}</p>}
-      </div>
-
-      {server.pendingClears.length > 0 &&
-        (server.binding?.state === 'suspended' ? (
-          <p className="mt-3 flex items-start gap-2 text-sm text-warn">
-            <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" strokeWidth={1.6} />
-            Not removed yet, server suspended: {server.pendingClears.join(', ')}. Re-approve or unbind to remove.
-          </p>
-        ) : (
-          <p className="mt-3 text-xs text-muted-foreground">Clearing: {server.pendingClears.join(', ')}</p>
-        ))}
+      )}
       <Confirm
         open={removingRow !== undefined}
         title={`Remove ${removing} from ${server.name}?`}
