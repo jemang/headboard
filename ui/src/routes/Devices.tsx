@@ -20,8 +20,10 @@ import { useStatusFlips, type FlipField } from '../lib/statusFlip'
 import { useHashScroll } from '../lib/useHashScroll'
 import { FlipStatus } from '../components/FlipStatus'
 import { Tabs } from '../components/Tabs'
-import { Laptop, Search, Trash2, Pencil, TimerReset, Check, X, Tag } from 'lucide-react'
+import { Laptop, Search, Trash2, Pencil, TimerReset, Check, X, Tag, ArrowRightLeft } from 'lucide-react'
 import { cn } from '../lib/cn'
+import { registrationIdHint } from '../lib/formHints'
+import { reassignCommand } from '../lib/serverRegistrationCommand'
 
 export function Devices({ me, needs }: { me: Me; needs: NeedItem[] }) {
   const { search, navigate } = useRouter()
@@ -426,6 +428,7 @@ function DeviceDrawer({ id, section, me, onClose }: { id: number | null; section
   const [tagDraft, setTagDraft] = useState('')
   const [tagSuggestionsOpen, setTagSuggestionsOpen] = useState(false)
   const [confirmTags, setConfirmTags] = useState<string[] | null>(null)
+  const [reassigning, setReassigning] = useState(false)
 
   // Same query the Access control page uses, so the suggestion list is the
   // tagOwners actually declared in policy rather than freehand guessing.
@@ -516,13 +519,14 @@ function DeviceDrawer({ id, section, me, onClose }: { id: number | null; section
       title={d?.name ?? 'Device'}
       icon={Laptop}
       subtitle={d && <span className="break-all font-mono text-xs">{d.ips.join('  ')}</span>}
-      actions={d && (d.mine || canManage) && renaming === null && editingTags === null && (
+      actions={d && (d.mine || canManage) && renaming === null && editingTags === null && !reassigning && (
         <>
           <IconButton icon={Pencil} label="Rename" onClick={() => setRenaming(d.name)} />
           {canManage && (
             <IconButton icon={Tag} label="Edit tags" onClick={() => { setEditingTags(d.tags ?? []); setTagDraft('') }} />
           )}
           {canManage && <Button icon={TimerReset} onClick={() => setConfirmExpire(true)}>Expire key</Button>}
+          {canManage && d.owner && <Button icon={ArrowRightLeft} onClick={() => setReassigning(true)}>Reassign</Button>}
           <IconButton icon={Trash2} variant="danger" label="Remove device" onClick={() => setConfirmDelete(true)} className="ml-auto" />
         </>
       )}
@@ -554,6 +558,20 @@ function DeviceDrawer({ id, section, me, onClose }: { id: number | null; section
               {d.expiry ? new Date(d.expiry).toLocaleString() : 'never expires'}
             </Field>
           </dl>
+
+          {canManage && reassigning && d.owner && (
+            <ReassignPanel
+              device={d}
+              onCancel={() => setReassigning(false)}
+              onDone={(moved) => {
+                setReassigning(false)
+                onClose()
+                void qc.invalidateQueries({ queryKey: ['devices'] })
+                void qc.invalidateQueries({ queryKey: ['tailnet-users'] })
+                toast.ok(`${moved.name} now belongs to ${moved.owner ?? 'its new owner'} at ${moved.ips[0] ?? 'a new address'}`)
+              }}
+            />
+          )}
 
           {(d.mine || canManage) && (renaming !== null || editingTags !== null) && (
             <Section title="Edit">
@@ -869,6 +887,98 @@ function DeviceDrawer({ id, section, me, onClose }: { id: number | null; section
         onCancel={() => setConfirmTags(null)}
       />
     </Drawer>
+  )
+}
+
+// Headscale cannot change a node's owner, so moving a device is a fresh sign-in
+// that an admin approves for the new user; the server then removes the old node.
+function ReassignPanel({ device, onCancel, onDone }: { device: Device; onCancel: () => void; onDone: (moved: Device) => void }) {
+  const [user, setUser] = useState('')
+  const [authId, setAuthId] = useState('')
+  const [confirming, setConfirming] = useState(false)
+  const users = useQuery({ queryKey: ['tailnet-users'], queryFn: api.tailnetUsers })
+  const registrationInfo = useQuery({ queryKey: ['registration-info'], queryFn: api.registrationInfo })
+
+  const reassign = useMutation({
+    mutationFn: () => api.reassignDevice(device.id, authId.trim(), user),
+    onSuccess: onDone,
+    onSettled: () => setConfirming(false),
+  })
+
+  const command = registrationInfo.data?.headscalePublicUrl ? reassignCommand(registrationInfo.data.headscalePublicUrl) : ''
+  const idHint = registrationIdHint(authId)
+  const ready = user !== '' && authId.trim().length > 13 && idHint === null
+  // By id: `owner` is Headscale's display username, which is the email when one is set.
+  const others = (users.data?.users ?? []).filter((u) => u.id !== device.ownerId)
+
+  return (
+    <Section title="Reassign to another user">
+      <div className="space-y-4 rounded-lg border border-border bg-surface-0 p-3">
+        {(reassign.error || users.error || registrationInfo.error) && (
+          <ErrorNote error={reassign.error ?? users.error ?? registrationInfo.error} />
+        )}
+
+        <label className="block">
+          <span className="text-xs text-muted-foreground">1. New owner</span>
+          <select
+            value={user}
+            onChange={(e) => setUser(e.target.value)}
+            className="mt-1 block h-10 w-full rounded-lg border border-border bg-surface-1 px-2 text-sm md:h-9 md:w-64"
+          >
+            <option value="">— choose a user —</option>
+            {others.map((u) => (
+              <option key={u.id} value={u.name}>{u.name}</option>
+            ))}
+          </select>
+        </label>
+
+        <div>
+          <p className="text-xs text-muted-foreground">2. On <span className="font-mono">{device.name}</span>, sign in again</p>
+          {command ? (
+            <div className="mt-1 flex items-center gap-2 rounded-md bg-surface-2 px-2 py-1.5">
+              <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs">{command}</code>
+              <Mono compact label="re-sign-in command" value={command} className="shrink-0" />
+            </div>
+          ) : !registrationInfo.error && <p className="mt-1 text-xs text-muted-foreground">Loading the Headscale address…</p>}
+          <p className="mt-1 text-xs text-muted-foreground">
+            The device goes offline until you approve below. If it asks for flags it already uses, add them as it lists.
+          </p>
+        </div>
+
+        <div>
+          <span className="text-xs text-muted-foreground">3. Registration id it prints</span>
+          <Input value={authId} onChange={setAuthId} placeholder="hskey-authreq-…" className="mt-1 w-full" />
+          {idHint && <p className="mt-1 text-xs text-danger">{idHint}</p>}
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          The device gets a new address; anything pinned to{' '}
+          <span className="font-mono">{device.ips.join(', ')}</span> needs updating. An id from a different machine is refused and changes nothing.
+        </p>
+
+        <div className="flex gap-2">
+          <Button variant="primary" icon={ArrowRightLeft} disabled={!ready || reassign.isPending} onClick={() => setConfirming(true)}>
+            Reassign
+          </Button>
+          <Button variant="ghost" icon={X} onClick={onCancel}>Cancel</Button>
+        </div>
+      </div>
+
+      <Confirm
+        open={confirming}
+        title={`Move ${device.name} to ${user}?`}
+        body={
+          <>
+            <span className="font-mono">{device.name}</span> stops belonging to{' '}
+            <span className="font-mono">{device.owner}</span>. Its old entry is removed and it rejoins with a new address.
+          </>
+        }
+        confirmLabel="Reassign"
+        onConfirm={() => reassign.mutate()}
+        onCancel={() => setConfirming(false)}
+        busy={reassign.isPending}
+      />
+    </Section>
   )
 }
 

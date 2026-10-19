@@ -117,6 +117,7 @@ func TestDangerousActionsNeedSudo(t *testing.T) {
 		{http.MethodPut, "/api/devices/1/routes", map[string]any{"routes": []string{}}},
 		{http.MethodPost, "/api/devices/1/expire", nil},
 		{http.MethodDelete, "/api/devices/1", nil},
+		{http.MethodPost, "/api/devices/1/reassign", map[string]any{"authId": "abcdefghijklmnop", "user": "bob"}},
 		{http.MethodDelete, "/api/users/1", nil},
 		{http.MethodPut, "/api/accounts/1/headscale-user", map[string]any{"headscaleUserId": 1}},
 		{http.MethodPut, "/api/accounts/1/role", map[string]any{"role": "admin"}},

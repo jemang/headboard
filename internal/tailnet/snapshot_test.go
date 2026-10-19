@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/netip"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -415,6 +416,73 @@ func TestBrokenPolicyStillYieldsASnapshot(t *testing.T) {
 
 	if snap.Manager != nil {
 		t.Error("a policy that references an undefined group produced a manager")
+	}
+
+	if !strings.Contains(snap.PolicyErr, "group:nope") {
+		t.Errorf("the compile error was not kept for the UI: %q", snap.PolicyErr)
+	}
+}
+
+// Two Headscale users with one name make every reference to that name
+// ambiguous. The engine repeats the error once per reference, across lines;
+// the UI needs it once, on one line.
+func TestDuplicateUserErrorIsOneDedupedLine(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	f := newFake()
+	twin := types.User{Name: "alice"}
+	twin.ID = 3
+	f.users = append(f.users, twin)
+	f.policy = `{
+  "groups": {"group:eng": ["alice@"], "group:dev": ["alice@"]},
+  "acls": [{"action": "accept", "src": ["group:eng", "group:dev"], "dst": ["*:*"]}],
+}`
+
+	w := New(f, time.Hour, quiet())
+
+	go w.Run(ctx)
+
+	waitFor(t, "a snapshot", func() bool {
+		s, _ := w.Current()
+
+		return s != nil
+	})
+
+	snap, _ := w.Current()
+
+	if snap.Manager != nil {
+		t.Fatal("an ambiguous user reference produced a manager")
+	}
+
+	if strings.ContainsAny(snap.PolicyErr, "\n\t") {
+		t.Errorf("the error is not one line: %q", snap.PolicyErr)
+	}
+
+	if n := strings.Count(snap.PolicyErr, "multiple users found"); n != 1 {
+		t.Errorf("the repeated error appears %d times: %q", n, snap.PolicyErr)
+	}
+}
+
+func TestEmptyPolicyHasNoError(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	f := newFake()
+	f.policy = ""
+
+	w := New(f, time.Hour, quiet())
+
+	go w.Run(ctx)
+
+	waitFor(t, "a snapshot", func() bool {
+		s, _ := w.Current()
+
+		return s != nil
+	})
+
+	if snap, _ := w.Current(); snap.Manager != nil || snap.PolicyErr != "" {
+		t.Errorf("an empty policy should leave no manager and no error, got %v / %q", snap.Manager, snap.PolicyErr)
 	}
 }
 

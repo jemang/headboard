@@ -17,3 +17,9 @@ export function serverRegistrationCommand(
 
   return args.join(' ')
 }
+
+// Signing in again as someone else is how a device changes owner: Headscale
+// has no way to move a node. The device prints an auth id for approval.
+export function reassignCommand(headscalePublicURL: string) {
+  return `${serverRegistrationCommand(headscalePublicURL, 'standard', '')} --force-reauth`
+}

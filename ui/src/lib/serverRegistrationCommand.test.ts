@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { serverRegistrationCommand } from './serverRegistrationCommand'
+import { reassignCommand, serverRegistrationCommand } from './serverRegistrationCommand'
 
 describe('serverRegistrationCommand', () => {
   it('builds pending-registration commands for every server type', () => {
@@ -20,6 +20,12 @@ describe('serverRegistrationCommand', () => {
   it('quotes operator input as a single shell argument', () => {
     expect(serverRegistrationCommand("https://hs.example/a'b", 'standard', '')).toContain(
       "'https://hs.example/a'\"'\"'b'",
+    )
+  })
+
+  it('forces a fresh sign-in for a reassign', () => {
+    expect(reassignCommand('https://hs.example')).toBe(
+      "tailscale up --login-server='https://hs.example' --force-reauth",
     )
   })
 })

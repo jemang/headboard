@@ -464,6 +464,8 @@ export const api = {
     send<Device>('PUT', `/api/devices/${id}/routes`, { routes }),
   expireDevice: (id: number) => send<Device>('POST', `/api/devices/${id}/expire`),
   deleteDevice: (id: number) => send<void>('DELETE', `/api/devices/${id}`),
+  reassignDevice: (id: number, authId: string, user: string) =>
+    send<Device>('POST', `/api/devices/${id}/reassign`, { authId, user }),
 
   tailnetUsers: () => request<{ users: TailnetUser[] }>('/api/users'),
   createTailnetUser: (body: { name: string; displayName?: string; email?: string }) =>

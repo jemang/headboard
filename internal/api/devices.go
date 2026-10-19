@@ -271,14 +271,13 @@ func init() {
 				"reach, and peers is the literal peer list it would be given.",
 			Tags: []string{"devices"},
 		}, func(ctx context.Context, in *deviceInput) (*rulesOutput, error) {
-			_, node, snap, err := deviceFor(ctx, deps, in.ID, auth.CapViewSelf)
+			p, node, snap, err := deviceFor(ctx, deps, in.ID, auth.CapViewSelf)
 			if err != nil {
 				return nil, err
 			}
 
 			if snap.Manager == nil {
-				return nil, huma.Error409Conflict(
-					"the current policy does not compile, so effective rules are unavailable")
+				return nil, rulesUnavailable(p, snap)
 			}
 
 			inbound, err := snap.Manager.Inbound(node.ID)
@@ -304,6 +303,23 @@ func init() {
 			return out, nil
 		})
 	})
+}
+
+// rulesUnavailable explains a snapshot with no policy engine. The compile error
+// goes only to people who can edit the policy: it names other users' accounts,
+// and a member could not act on it anyway.
+func rulesUnavailable(p auth.Principal, snap *tailnet.Snapshot) error {
+	if snap.PolicyErr == "" {
+		return huma.Error409Conflict(
+			"no policy is set, so every device can reach every other; effective rules appear once a policy is saved")
+	}
+
+	if !p.Can(auth.CapManagePolicy) {
+		return huma.Error409Conflict(
+			"the current policy does not compile, so effective rules are unavailable; an administrator has to fix it")
+	}
+
+	return huma.Error409Conflict("the current policy does not compile: " + snap.PolicyErr)
 }
 
 // The UI distinguishes "no rules" from "not loaded", so an empty list must

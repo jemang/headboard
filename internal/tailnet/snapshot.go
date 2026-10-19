@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +36,10 @@ type Snapshot struct {
 
 	// Manager answers effective-rules questions for this snapshot.
 	Manager *policy.Manager
+
+	// PolicyErr is why the policy did not compile, on one line. Empty when
+	// Manager is set, and also when there is no policy at all.
+	PolicyErr string
 
 	// Revision increments whenever anything changed. Browsers use it to
 	// tell a real change from a keepalive.
@@ -257,12 +262,45 @@ func (w *Watcher) fetch(ctx context.Context) (*Snapshot, error) {
 			// but it must not blank the device list — the ACL editor
 			// is exactly where someone would go to fix it.
 			w.log.Error("policy did not compile; effective rules are unavailable", "err", err)
+			snap.PolicyErr = oneLine(err.Error())
 		} else {
 			snap.Manager = mgr
 		}
 	}
 
 	return snap, nil
+}
+
+// oneLine flattens a multi-error into one line for display. The policy engine
+// reports an ambiguous user once per reference to it, so identical lines are
+// dropped.
+func oneLine(s string) string {
+	var head string
+
+	seen := map[string]bool{}
+
+	var rest []string
+
+	for i, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if i == 0 {
+			head = line
+			continue
+		}
+
+		if line == "" || seen[line] {
+			continue
+		}
+
+		seen[line] = true
+		rest = append(rest, line)
+	}
+
+	if len(rest) == 0 {
+		return head
+	}
+
+	return head + " " + strings.Join(rest, "; ")
 }
 
 // SHA256 hashes policy text. Exported because the ACL write path compares
